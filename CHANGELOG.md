@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.0](https://github.com/I-Am-Webbo/tropis/compare/v0.4.0...v0.5.0) (2026-10-18)
+
+
+### Features
+
+* **reason:** add prompt v4 ([e90e104](https://github.com/I-Am-Webbo/tropis/commit/e90e104cc2cea9fa74d50cae42e251fee29ac33f))
+
 ## [0.4.0](https://github.com/00Webbo/tropis/compare/v0.3.2...v0.4.0) (2026-10-12)
 
 
