@@ -106,7 +106,7 @@ described with `backend` in
 [values.yaml](deploy/helm/tropis/values.yaml).
 
 [docs/model-profiles.md](docs/model-profiles.md) compares ready-made backend
-profiles (hosted, sweep-then-escalate, local GPU, local CPU) by hardware,
+profiles (hosted, sweep-then-escalate, local GPU) by hardware,
 what leaves the cluster, speed and measured behaviour. Each has a values
 file to install with `-f`.
 
