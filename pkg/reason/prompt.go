@@ -17,9 +17,14 @@ import (
 // v3: host.unreadable also carries devices smartctl produced no output for
 // (a drive that hung until the timeout), and the prompt says what a timeout
 // means.
-const PromptVersion = "v3"
+//
+// v4: the prompt says that clean SMART does not clear the host storage path,
+// that unreadable reasons other than a timeout say nothing about the disk,
+// and that a workload causing its own storage eviction is causal at the
+// kubernetes layer, not coincidental. The input document is unchanged.
+const PromptVersion = "v4"
 
-//go:embed prompts/v3.md
+//go:embed prompts/v4.md
 var systemPrompt string
 
 // SystemPrompt returns the versioned system prompt. It is identical for every
