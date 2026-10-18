@@ -3,9 +3,11 @@
 # For: clusters whose data must not leave, with a GPU of about 8 GB.
 # Tested on an RTX 3070 (8 GB VRAM).
 # Needs: an Ollama server reachable from the cluster, with the model pulled
-# (`ollama pull qwen3.5:9b`). contextTokens is doubled from the default: on
-# the dev corpus the larger window let the model's hidden reasoning finish
-# more often, at the cost of some speed. Thinking stays at the model's
+# (`ollama pull qwen3.5:9b`). Model and context take about 7.3 GB, so give
+# Ollama a card that drives no display and set LLAMA_ARG_FIT_TARGET=512 in
+# its environment; otherwise part of the model runs on the CPU and analysis
+# is about twice as slow. contextTokens is doubled from the default so the
+# model's hidden reasoning has room to finish. Thinking stays at the model's
 # default: turning it off made the model overconfident.
 # Leaves the cluster: nothing.
 backend:
