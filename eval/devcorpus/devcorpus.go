@@ -361,7 +361,7 @@ func appFor(workload string) (pod, container, volume string) {
 		return "log-writer-0", "writer", "log-writer"
 	case "minio-hostpath":
 		return "minio-0", "minio", "minio"
-	case "batch-reader-hostpath":
+	case "batch-reader-hostpath", "batch-reader-silent":
 		return "batch-reader-x7k2p", "reader", "batch"
 	case "memory-hog":
 		return "cache-warmer", "warmer", "cache"

@@ -13,6 +13,11 @@ storage path exists but is not the cause. Pick the one the scenario's
 description matches; a hostPath the description denies would make the
 label untrue of the fixture.
 
+`batch-reader-silent` is `batch-reader-hostpath` with nothing to say: no
+output at all, and a failed read neither prints nor exits. The silent-137
+scenarios kill it from the host with `hack/symptoms/silent-kill.sh`, and
+their labels say no log explains the kill, so it must have none.
+
 The other exception is the two exhaustion workloads, `log-spam` and
 `emptydir-filler`. They are the fault: each overruns its own
 ephemeral-storage allowance (a container limit, an emptyDir `sizeLimit`)

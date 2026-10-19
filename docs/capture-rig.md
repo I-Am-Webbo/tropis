@@ -203,8 +203,8 @@ All scenarios run on `worker-02`; `TROPIS_DISK` is the drive's inventory id.
 | 25 | read-errors-unused-region-config-crash | coincidental | C, dm | `read-errors.sh`, default mid-disk blocks | check no workload file sits there |
 | 26 | stable-defects-healthy-hostpath-oom | coincidental | **S**, `scarred-sata` | natural defects | `memory-hog`: hostPath on the disk, by design |
 | 27 | pending-no-symptoms | insufficient | C, `real-sata` | `pending-sectors.sh` | `idle` workload |
-| 28 | unreadable-smart-restarts | insufficient | C | SMART withheld + manual SIGKILL | see Gaps |
-| 29 | pending-silent-137 | insufficient | C, `real-sata` | `pending-sectors.sh` + manual SIGKILL | see Gaps |
+| 28 | unreadable-smart-restarts | insufficient | C | SMART withheld + `silent-kill.sh` | `batch-reader-silent`; SMART: see Gaps; kills: see 4.7 |
+| 29 | pending-silent-137 | insufficient | C, `real-sata` | `pending-sectors.sh` + `silent-kill.sh` | `batch-reader-silent`; default (mid-disk) LBAs, away from the dataset; kills: see 4.7 |
 | 30 | degradation-early-no-symptoms | insufficient | D, `real-sata` | `degradation.sh` STEP=2 INTERVAL=600 | `idle` workload |
 
 By drive: **C** 20 scenarios (7 real-SATA, 13 others including #28), **S** 5,
@@ -227,7 +227,7 @@ it is meant to leave permanent marks.
 3. On `worker-02`:
 
    ```sh
-   sudo apt install smartmontools hdparm dmsetup e2fsprogs util-linux kmod make git
+   sudo apt install smartmontools hdparm dmsetup e2fsprogs util-linux kmod make git jq
    sudo modprobe -a dm_dust dm_flakey dm_delay && dmsetup targets
    ```
 
@@ -363,10 +363,32 @@ and do them all again with it present. For each scenario:
    fixture records a healthy disk. Check that the node's `DiskPressure` is
    still `False` when you capture: these scenarios are evictions under no
    node pressure.
+
+   **Silent-137 scenarios** (#28 `unreadable-smart-restarts`, #29
+   `pending-silent-137`) add the symptom by hand after this step, once
+   `batch-reader-silent` has been running for a minute (it writes its
+   dataset first) and, for #29, the fault is in place:
+
+   ```sh
+   TROPIS_INJECT_CONFIRM=worker-02/silent-kill APP=batch-reader KILLS=3 INTERVAL=60 \
+     hack/symptoms/silent-kill.sh start >> run-log.jsonl
+   ```
+
+   It SIGKILLs the reader's main process from the host, three times a
+   minute apart, so the pod restarts with last state `Error`, exit code
+   137, and no `OOMKilled` reason, no `Killing` event and no log line (the
+   workload prints nothing). The kubelet's ordinary restart events
+   (`Pulled`, `Created`, `Started`, `BackOff`) are unavoidable and explain
+   nothing. Its record is a symptom record for the run log: never put it in
+   `fault.json` or pass it to `--injection`. For #29 leave `SECTORS` at its
+   mid-disk default, away from the dataset: a reader stuck in an
+   uninterruptible read does not die on SIGKILL until the read returns.
+   Stop it with `hack/symptoms/silent-kill.sh stop >> run-log.jsonl` after
+   capturing.
 4. **Wait for the symptom** the scenario describes (crash loop, probe
    failures, read-only remount, OOM kill, a pod `Evicted` for local
-   storage). For read-path faults, drop the
-   page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`) so reads reach the
+   storage, `silent-kill.sh status` reporting every kill delivered). For
+   read-path faults, drop the page cache (`sync; echo 3 > /proc/sys/vm/drop_caches`) so reads reach the
    disk. Wait at least 2 minutes after injecting. For a `real-sata`
    scenario, also wait until the counter in its `expectSmart` has risen
    (`smartctl -A` on the drive: pending, attribute 197, for
@@ -493,9 +515,16 @@ there is no override.
    default to mid-disk. Until one exists, compute them by hand: with ext4
    made directly on `/dev/mapper/tropis-target` (offset 0, 4 KiB blocks),
    `filefrag -v -b4096 <file>` gives physical blocks; LBA = block × 8.
-5. **`silent-137` has no injection.** `pending-silent-137` and
-   `unreadable-smart-restarts` need a container killed with exit 137 and no
-   logs or events; no script or workload does this.
+5. ~~**`silent-137` has no injection.**~~ *Resolved.* Both scenarios now
+   run `batch-reader-silent` (the batch reader with no output, which
+   neither prints nor exits on a failed read), and
+   `hack/symptoms/silent-kill.sh` SIGKILLs its container from the host
+   through `crictl`, `KILLS` times, refusing anything that is not a
+   `tropis.io/eval=true` pod in `tropis-eval` (4.7). It is a symptom
+   helper, kept out of `hack/inject` because it is not the scenario's
+   fault and must never reach a label; its record goes to the run log.
+   The kubelet's ordinary restart events cannot be avoided and are not a
+   cause.
 6. **Withholding SMART is undocumented.** `unreadable-smart-restarts` says
    "the capability is withheld for this capture"; there is no documented
    procedure (and changing `collector.securityMode` restarts the collector).
