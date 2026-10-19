@@ -32,7 +32,7 @@ jobs:
           key: go-${{ runner.os }}-${{ steps.go.outputs.go-version }}-${{ hashFiles('go.sum') }}
           restore-keys: go-${{ runner.os }}-${{ steps.go.outputs.go-version }}-
       - uses: azure/setup-helm@v5
-      - run: make fmt-check vet test-race npd-test helm-lint
+      - run: make fmt-check vet test-race npd-test capture-test helm-lint
       - name: generated files are current
         # Stricter than make check-generated: any change anywhere fails.
         run: |

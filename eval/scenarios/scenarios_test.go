@@ -46,6 +46,11 @@ func TestScenarioReferencesExist(t *testing.T) {
 				t.Errorf("%s: injection script %s: %v", s.ID, s.Inject.Script, err)
 			}
 		}
+		if s.Symptom != nil {
+			if _, err := os.Stat(filepath.Join("..", "..", "hack", "symptoms", s.Symptom.Script)); err != nil {
+				t.Errorf("%s: symptom script %s: %v", s.ID, s.Symptom.Script, err)
+			}
+		}
 		if _, err := os.Stat(filepath.Join("workloads", s.Workload+".yaml")); err != nil {
 			t.Errorf("%s: workload manifest %s: %v", s.ID, s.Workload, err)
 		}
@@ -166,6 +171,26 @@ scenarios:
     hardware: [smart-withheld, scarred-sata]
     expected: {relationship: coincidental}
     synthetic: {smart: realloc-stable, workload: oom}
+  - id: target-on-write-errors
+    description: d
+    faultType: disk.write_errors
+    inject: {script: write-errors.sh, target: batch/dataset}
+    workload: idle
+    expected: {relationship: insufficient_evidence}
+    synthetic: {smart: healthy, workload: healthy}
+  - id: target-escapes
+    description: d
+    faultType: disk.read_errors
+    inject: {script: read-errors.sh, target: ../etc/passwd}
+    workload: idle
+    expected: {relationship: insufficient_evidence}
+    synthetic: {smart: healthy, workload: healthy}
+  - id: param-needs-quoting
+    description: d
+    workload: idle
+    symptom: {script: silent-kill, params: {APP: "a b"}}
+    expected: {relationship: insufficient_evidence}
+    synthetic: {smart: healthy, workload: healthy}
 `
 	_, err := Parse([]byte(bad))
 	if err == nil {
@@ -173,7 +198,9 @@ scenarios:
 	}
 	for _, want := range []string{"lower-case", "description", "rootCauseLayer", "shiny", "set together",
 		"needs expectSmart", "needs hardware: [real-sata]", "not one of [pending_sectors",
-		"contradict each other", "smart-withheld and scarred-sata contradict", `hardware "scared-sata" is not one of`} {
+		"contradict each other", "smart-withheld and scarred-sata contradict", `hardware "scared-sata" is not one of`,
+		"inject.target is only for", `inject.target "../etc/passwd"`, "symptom.script must name",
+		`symptom.params APP="a b"`} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should mention %q:\n%v", want, err)
 		}

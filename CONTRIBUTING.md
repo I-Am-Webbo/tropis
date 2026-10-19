@@ -21,7 +21,7 @@ needed to build, test, or run the evaluation harness.
 
 ```sh
 make help     # every task, grouped
-make check    # what to run before pushing: format, vet, tests, generated files, NPD protocol, chart lint
+make check    # what to run before pushing: format, vet, tests, generated files, NPD protocol, capture-driver dry run, chart lint
 ```
 
 The integration targets need Docker: `make inject-test` runs the fault

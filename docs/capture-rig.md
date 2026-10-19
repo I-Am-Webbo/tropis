@@ -496,7 +496,39 @@ test: `kubectl -n tropis-system rollout restart daemonset` on the collector.
 ### 4.7 One capture
 
 Do every scenario on the current drive with NPD absent, then install NPD
-and do them all again with it present. For each scenario:
+and do them all again with it present.
+
+**Use the capture driver.** On `worker-02`, as root, from a checkout, with
+the drive set up as in 4.6:
+
+```sh
+export TROPIS_INVENTORY=rig.yaml TROPIS_NODE=worker-02 TROPIS_DISK=clean
+export TROPIS_INJECT_CONFIRM=worker-02/clean
+hack/capture/run-scenario.sh --dry-run <scenario> npd-absent   # read the plan first
+hack/capture/run-scenario.sh <scenario> npd-absent
+```
+
+[`hack/capture/run-scenario.sh`](../hack/capture/README.md) does steps 1–7
+below for one scenario and variant, reading the scenario from `tropis
+scenario show` (so from `scenarios.yaml` as built into the `tropis`
+binary; its `inject.target` and `symptom` fields carry what the coverage
+matrix's notes say about aiming the fault and the silent kills). It checks
+what can be checked: the NPD variant against the node, no fault left
+active, the pass-through onto the inventory's target before mkfs, the
+collector's fresh pre-fault reading (or its 24 h of history for
+`scarred-sata`), every pod started, every silent kill delivered, an
+`expectSmart` counter above the start record's `smartBefore`, an eviction
+with `DiskPressure` `False` for exhaustion, and no leftover alert. What it
+cannot judge, that the scenario's symptom is really there, it asks: it
+shows the pods and events and the operator must type `yes`, once before
+and once after the 15-minute baseline wait. It stops the fault (and the
+silent kills, and the `smart-withheld` patch) on any exit, writes every
+record to a run directory outside `eval/fixtures`, never passes `--force`
+unless `RETAKE=1`, and has the operator type the containerd and
+silent-kill confirmations. It does not switch the NPD variant, swap drives
+or soak a scarred drive; those stay manual (below).
+
+The manual steps, for reference and for when the driver stops:
 
 1. **Reset.** `kubectl delete namespace tropis-eval --wait`; unmount, mkfs
    and remount as in 4.6. For a SMART-visible scenario, also restart the
@@ -657,7 +689,8 @@ restarts, so the next scenario's fixture would carry a stale trigger. Before
 the next scenario, `kubectl -n kube-system rollout restart daemonset
 node-problem-detector` and wait until every NPD condition on the node is
 `False`. NPD re-reads five minutes of `/dev/kmsg` on start, so this can take
-up to five minutes after the remount. Do it at every `npd-present` reset.
+up to five minutes after the remount. The capture driver does this at
+every `npd-present` reset.
 
 **Stable-defect block (S).** Install the scarred drive, set up as 4.6,
 then leave the collector running untouched for ≥ 24 h before the first
@@ -709,8 +742,9 @@ non-SMART-visible scenarios, immediately before the pending-sector ones:
 each of those restarts the collector at its reset anyway (4.7 step 1) and
 needs nothing older. Never do it in the stable-defect block, whose 24 h
 of history it would wipe. The block runs once per NPD variant, so #28
-takes this place in both passes.
-
+takes this place in both passes. The capture driver makes the patch after
+its reset and undoes it on exit, and refuses to start if the collector
+already runs as 65534 (an earlier undo was missed).
 ### 4.8 Check, commit, evaluate
 
 1. Check each fixture: `label.json`'s `injection.params` show the SMART
@@ -847,9 +881,19 @@ takes this place in both passes.
    `baseline.notes`; alerts with 30-minute or hour-long durations are not
    waited for. A quiet check before the first capture keeps standing
    alerts out of every baseline.
-10. **No reset tooling.** Restarting the collector to reset history, mkfs
-    and namespace cleanup between scenarios are manual; a `hack/` capture
-    driver per scenario would reduce operator error over 60 captures.
+10. ~~**No reset tooling.**~~ *Resolved.* `hack/capture/run-scenario.sh`
+    drives one scenario and variant through 4.7: reset (namespace, mkfs
+    after checking the pass-through, collector restart and fresh reading),
+    workload, aimed injection, symptom helper, checks, the baseline wait,
+    baseline, capture and stop. It reads each scenario through a new
+    read-only `tropis scenario show`, which prints it as shell
+    assignments, rather than parsing YAML in shell; `scenarios.yaml` gained
+    `inject.target` and `symptom` so the aiming and silent kills the matrix
+    describes are scenario data too. It automates the checks it can make
+    and asks the operator to confirm the symptom; it never forces a
+    capture. `--dry-run` prints the plan, and `make capture-test` (in `make
+    check`) dry-runs it over every scenario in both variants, so a scenario
+    it cannot drive fails the build.
 11. **NPD's events reach the model in `npd-present`.** NPD reports
     through Node events as well as conditions: an event for each temporary
     rule (`TaskHung`, for one) and one for each condition change (reason

@@ -12,10 +12,11 @@ could quietly corrupt the evaluation is treated as a defect.
 ## Commands
 
 ```sh
-make check        # run before declaring any change done: fmt, vet, tests, generated files, NPD protocol, chart lint
+make check        # run before declaring any change done: fmt, vet, tests, generated files, NPD protocol, capture-driver dry run, chart lint
 make test         # unit tests only
 make generate     # after touching pkg/schema, pkg/k8s/report.go or eval/scenarios
 make eval-dev     # replay the synthetic dev corpus with the mock backend
+make capture-test # dry-run hack/capture/run-scenario.sh over every scenario (in make check)
 make inject-test  # fault-injection scripts, in a privileged container (Docker)
 make kind-e2e     # install on kind and require a verdict (Docker, kind, kubectl, helm, Go)
 ```
@@ -64,7 +65,11 @@ test guards a rule, do not weaken the test to make a change pass.
   scenario on a drive with old, stable defects (`synthetic.smart:
   realloc-stable`) must declare `hardware: [scarred-sata]`, and one whose
   collector cannot read SMART (`synthetic.smart: unreadable`) `hardware:
-  [smart-withheld]`.
+  [smart-withheld]`. Aiming a fault at the workload's data
+  (`inject.target`) and a symptom helper (`symptom`) are scenario fields
+  too, read by `hack/capture/run-scenario.sh`. A new script, target kind,
+  symptom helper or hardware kind needs a step in that driver, or
+  `make capture-test` fails.
 - **`smartctl` exit status is a bitfield.** Non-zero is normal for a failing
   drive. Read the JSON envelope; see the comments in `pkg/host/smart/parse.go`.
 - **Unanchored `.gitignore` patterns** once swallowed `cmd/tropis-collector`
@@ -103,7 +108,7 @@ test guards a rule, do not weaken the test to make a change pass.
 | `pkg/pipeline` | Live path, shared with the eval runner |
 | `eval/` | Scenarios, dev corpus, runner, report, capture (see `eval/README.md`) |
 | `hack/inject`, `hack/symptoms`, `hack/npd-plugin` | Fault injection (records feed labels); symptom helpers such as a silent container kill (run log only, never a label); NPD plugin wrapper |
-| `hack/capture` | Capture-rig setup: the pinned stock NPD install for the `npd-present` variant (`npd/`); the incumbent baseline's values and SATA SMART rules (`baseline/`) |
+| `hack/capture` | Capture driver (`run-scenario.sh`, one scenario and variant per run; reads scenarios through `tropis scenario show`, never by parsing YAML); pinned stock NPD for `npd-present` (`npd/`); the incumbent baseline's values and SATA SMART rules (`baseline/`) |
 | `deploy/helm/tropis` | The chart |
 | `deploy/helm/tropis/examples` | Values file per model profile, linted by `make helm-lint`; compared in `docs/model-profiles.md` |
 | `docs/capture-rig.md` | Capture rig hardware, scenario coverage and run book |

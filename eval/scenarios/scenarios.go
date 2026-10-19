@@ -46,6 +46,11 @@ type Scenario struct {
 	// Inject is how the fault is injected on the rig.
 	Inject *Injection `json:"inject,omitempty"`
 
+	// Symptom is a helper under hack/symptoms that produces the scenario's
+	// symptom where no fault does, such as a container killed silently. Its
+	// record goes to the run log, never into the label.
+	Symptom *Symptom `json:"symptom,omitempty"`
+
 	// Workload names the workload manifest under eval/scenarios/workloads.
 	Workload string `json:"workload"`
 
@@ -79,7 +84,40 @@ type Scenario struct {
 type Injection struct {
 	Script string            `json:"script"`
 	Params map[string]string `json:"params,omitempty"`
+
+	// Target aims a bad-sector or corruption fault at the workload's own
+	// data instead of the script's default (mid-disk sectors, or a file of
+	// its own). It is either a path relative to the target disk's
+	// mountpoint, where a glob means the most recently modified match (for
+	// a writer that cycles through files, the one it will rewrite last), or
+	// "postgres:<table>" for that table's file in the postgres workload. The
+	// capture driver turns it into SECTORS or BAD_BLOCKS with
+	// hack/inject/target-blocks.sh, or into VICTIM for fs-corruption.sh.
+	Target string `json:"target,omitempty"`
 }
+
+// Symptom names a helper under hack/symptoms and its parameters.
+type Symptom struct {
+	Script string            `json:"script"`
+	Params map[string]string `json:"params,omitempty"`
+}
+
+// TargetScripts are the injection scripts that can be aimed with
+// Injection.Target, and the variable each takes it as.
+var TargetScripts = map[string]string{
+	"pending-sectors.sh": "SECTORS",
+	"read-errors.sh":     "BAD_BLOCKS",
+	"fs-corruption.sh":   "VICTIM",
+}
+
+var (
+	// Parameters become environment variables in shell scripts, so both
+	// names and values are kept to what needs no quoting.
+	paramName     = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	paramValue    = regexp.MustCompile(`^[A-Za-z0-9._:/-]*$`)
+	postgresTable = regexp.MustCompile(`^postgres:[a-z_][a-z0-9_]*$`)
+	targetPath    = regexp.MustCompile(`^[A-Za-z0-9._*-]+(/[A-Za-z0-9._*-]+)*$`)
+)
 
 // Expected is a scenario's ground truth.
 type Expected struct {
@@ -181,6 +219,28 @@ func Validate(all []Scenario) error {
 		if s.Inject != nil && !strings.HasSuffix(s.Inject.Script, ".sh") {
 			add("%s: inject.script must name a script in hack/inject", where)
 		}
+		if s.Inject != nil && s.Inject.Target != "" {
+			t := s.Inject.Target
+			if _, ok := TargetScripts[s.Inject.Script]; !ok {
+				add("%s: inject.target is only for %s", where, strings.Join(sortedKeys(TargetScripts), ", "))
+			}
+			if !postgresTable.MatchString(t) && (!targetPath.MatchString(t) || slices.Contains(strings.Split(t, "/"), "..")) {
+				add("%s: inject.target %q must be a relative path under the mountpoint or postgres:<table>", where, t)
+			}
+		}
+		if s.Symptom != nil && !strings.HasSuffix(s.Symptom.Script, ".sh") {
+			add("%s: symptom.script must name a script in hack/symptoms", where)
+		}
+		for _, p := range []struct {
+			field  string
+			params map[string]string
+		}{{"inject.params", injectParams(s.Inject)}, {"symptom.params", symptomParams(s.Symptom)}} {
+			for k, v := range p.params {
+				if !paramName.MatchString(k) || !paramValue.MatchString(v) {
+					add("%s: %s %s=%q must be an upper-case name and a value with no spaces or quotes", where, p.field, k, v)
+				}
+			}
+		}
 
 		// A scenario on real SATA exists to change SMART, so it must say
 		// which counters; capture checks the drive against them.
@@ -234,6 +294,29 @@ func Validate(all []Scenario) error {
 		return fmt.Errorf("invalid scenarios:\n  - %s", strings.Join(errs, "\n  - "))
 	}
 	return nil
+}
+
+func injectParams(i *Injection) map[string]string {
+	if i == nil {
+		return nil
+	}
+	return i.Params
+}
+
+func symptomParams(s *Symptom) map[string]string {
+	if s == nil {
+		return nil
+	}
+	return s.Params
+}
+
+func sortedKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 // Label returns the ground-truth label for a scenario.

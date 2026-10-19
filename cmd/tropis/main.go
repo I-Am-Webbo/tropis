@@ -5,6 +5,7 @@
 //	tropis eval                replay the fixture corpus and score it
 //	tropis capture             capture a fixture from a live node
 //	tropis inventory ...       validate and query the rig inventory
+//	tropis scenario ...        list scenarios; print one for the capture driver
 //	tropis version             print the version
 //
 // Tropis is read-only. No command changes cluster state other than writing
