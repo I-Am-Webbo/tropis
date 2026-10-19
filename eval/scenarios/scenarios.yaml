@@ -21,6 +21,11 @@
 # one unless the drive's reallocated count is above zero and unchanged since
 # the collector's earlier reading, and pending is 0 in both.
 #
+# A scenario whose collector cannot read SMART (hardware: [smart-withheld])
+# is captured with the collector running as a non-root user; capture refuses
+# one unless every device it tried reads as permission denied and none was
+# readable. See docs/capture-rig.md, 4.7.
+#
 # `synthetic` hints are used only to generate the development corpus under
 # eval/testdata. They are never used on the rig.
 scenarios:
@@ -364,6 +369,7 @@ scenarios:
       capture), and a pod has been killed with exit 137 leaving no logs or
       events. Nothing supports a judgement either way.
     workload: batch-reader-silent
+    hardware: [smart-withheld]
     expected: {relationship: insufficient_evidence}
     synthetic: {smart: unreadable, workload: silent-137}
 

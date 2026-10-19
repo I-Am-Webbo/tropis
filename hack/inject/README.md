@@ -98,7 +98,9 @@ difference impossible to lose.
    (found by the record's serial) shows none of its `expectSmart` counters
    higher than in the collector's earlier reading, a `scarred-sata`
    scenario whose `--disk` drive does not show reallocated sectors above
-   zero and unchanged (pending 0), an NPD variant that does
+   zero and unchanged (pending 0), a `smart-withheld` scenario in which
+   the collector could read any device (or failed on one for a reason
+   other than permission), an NPD variant that does
    not match what is on the node, or a fault type the scenario does not
    expect.
    Repeat with NPD installed for the `npd-present` variant.

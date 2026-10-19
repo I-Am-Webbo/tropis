@@ -140,6 +140,13 @@ func Capture(ctx context.Context, src Sources, req Request) (string, error) {
 			return "", err
 		}
 	}
+	// A smart-withheld scenario is a claim that the collector could not
+	// read SMART at all.
+	if slices.Contains(req.Scenario.Hardware, "smart-withheld") {
+		if err := CheckSMARTWithheld(req.Scenario.ID, host); err != nil {
+			return "", err
+		}
+	}
 
 	f := &schema.Fixture{
 		Version:     schema.FixtureVersion,
