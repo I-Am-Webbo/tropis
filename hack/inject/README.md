@@ -33,7 +33,28 @@ layers do not count toward their limits) and that filesystem keeps ample
 headroom after the workload's capped writes. Apply the scenario's workload
 right after `start`.
 
-Every script takes `start`, `stop` and `status`. `start` and `stop` each print
+### Targeting a file's blocks
+
+The bad-sector faults default to four sectors mid-disk. To put them under a
+workload's data instead, `target-blocks.sh <file>` prints `SECTORS`
+(physical LBAs, for `pending-sectors.sh`) and `BAD_BLOCKS` (512-byte blocks
+of `/dev/mapper/tropis-target`, for `read-errors.sh`), one sector in each of
+`COUNT` filesystem blocks (default 4, at most 64) spread through the file:
+
+```sh
+eval "$(hack/inject/target-blocks.sh /mnt/disks/sacrificial/batch/dataset)"
+BAD_BLOCKS="$BAD_BLOCKS" hack/inject/read-errors.sh start > fault.json
+```
+
+It is a read-only helper, not a fault script: no `start`/`stop`, no record.
+It reads the filesystem block size from `filefrag -v` and the pass-through's
+offset onto the disk from `dmsetup table`, and refuses a file that is not on
+the tropis-target filesystem, a table that is not the plain pass-through
+(compute targets before injecting), a target that is a partition, and a
+disk whose logical sectors are not 512 bytes. The variables are printed
+unexported, so pass them explicitly.
+
+Every fault script takes `start`, `stop` and `status`. `start` and `stop` each print
 one JSON record on stdout, shaped for `label.json`:
 
 ```json
@@ -128,8 +149,9 @@ does, and `stop` swaps the pass-through back.
 
 `test.sh` runs every script end to end against a loop device and checks the
 fault's actual effect — that a bad block really fails to read, a delayed read
-really times out, the filesystem really reports corruption — that `stop`
-removes it, and that the refusals hold. It must run as root in a disposable
+really times out, the filesystem really reports corruption, a file whose
+blocks `target-blocks.sh` named really fails to read while another does not
+— that `stop` removes it, and that the refusals hold. It must run as root in a disposable
 privileged container, and refuses to run without `TROPIS_INJECT_TEST=1`.
 `make inject-test` builds the binaries and runs it that way (Docker):
 

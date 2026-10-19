@@ -143,6 +143,52 @@ readable "$base" && pass "degradation: cleared after stop" || fail "degradation:
 
 mkfs.ext4 -q -F "$DM" && mount "$DM" "$MNT" || { fail "mkfs/mount"; exit 1; }
 
+# --- targeting a file's blocks -----------------------------------------------
+#
+# target-blocks.sh must name sectors under the file it is given: injected
+# there, a direct read of that file fails while a neighbouring file still
+# reads.
+
+mkdir -p "$MNT/batch"
+dd if=/dev/urandom of="$MNT/batch/dataset" bs=1M count=2 conv=fsync 2>/dev/null
+dd if=/dev/urandom of="$MNT/other" bs=1M count=2 conv=fsync 2>/dev/null
+readfile() { dd if="$1" of=/dev/null bs=4096 iflag=direct 2>/dev/null; }
+if out="$("$HERE/target-blocks.sh" "$MNT/batch/dataset")"; then
+	SECTORS="" BAD_BLOCKS=""
+	eval "$out"
+	set -- $BAD_BLOCKS
+	[ "$#" -eq 4 ] && pass "target-blocks: four blocks by default" || fail "target-blocks: $# blocks: $out"
+	# On a loop device the pass-through is the whole disk at offset 0.
+	[ -n "$SECTORS" ] && [ "$SECTORS" = "$BAD_BLOCKS" ] && pass "target-blocks: LBAs equal device blocks at offset 0" ||
+		fail "target-blocks: SECTORS '$SECTORS' and BAD_BLOCKS '$BAD_BLOCKS' differ"
+	rec="$(BAD_BLOCKS="$BAD_BLOCKS" "$HERE/read-errors.sh" start)" || fail "target-blocks: read-errors start"
+	if "$HERE/target-blocks.sh" "$MNT/batch/dataset" >/dev/null 2>&1; then
+		fail "target-blocks: accepted a table with a fault active"
+	else
+		pass "target-blocks: refuses while a fault is active"
+	fi
+	readfile "$MNT/batch/dataset" && fail "target-blocks: the targeted file still reads" || pass "target-blocks: the targeted file fails to read"
+	readfile "$MNT/other" && pass "target-blocks: another file still reads" || fail "target-blocks: another file fails to read"
+	"$HERE/read-errors.sh" stop >/dev/null || fail "target-blocks: read-errors stop"
+	readfile "$MNT/batch/dataset" && pass "target-blocks: the file reads after stop" || fail "target-blocks: the file still fails after stop"
+	out="$(COUNT=64 "$HERE/target-blocks.sh" "$MNT/batch/dataset")" && eval "$out"
+	set -- $BAD_BLOCKS
+	[ "$#" -eq 64 ] && pass "target-blocks: COUNT=64 gives 64 blocks" || fail "target-blocks: COUNT=64 gave $#"
+else
+	fail "target-blocks: refused a file on the target filesystem"
+fi
+if "$HERE/target-blocks.sh" "$WORK/protected.img" >/dev/null 2>&1; then
+	fail "target-blocks: accepted a file off the target filesystem"
+else
+	pass "target-blocks: refuses a file off the target filesystem"
+fi
+if COUNT=65 "$HERE/target-blocks.sh" "$MNT/batch/dataset" >/dev/null 2>&1; then
+	fail "target-blocks: accepted COUNT=65"
+else
+	pass "target-blocks: refuses more than 64 blocks"
+fi
+rm -rf "$MNT/batch" "$MNT/other"
+
 # --- ephemeral-storage exhaustion --------------------------------------------
 #
 # Injects nothing (the workload is the fault), so what is tested is the
