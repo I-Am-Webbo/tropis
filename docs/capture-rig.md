@@ -277,6 +277,57 @@ Then:
   restart the chart during a block: the collector's SMART history is held
   in memory, and the stable-defect scenarios need 24 h of it.
 
+**node-problem-detector** is installed only for the `npd-present` pass
+(4.7, *Switching variant*), never in 4.3's initial setup. It is **stock
+upstream NPD**: the project's own manifests (`deployment/` in
+kubernetes/node-problem-detector) at release **v1.37.0**, pinned on
+2026-10-19 (the latest release that day; upstream's manifests still name
+the v0.8.19 image, so the image is set to v1.37.0's, by digest).
+[`hack/capture/npd/kustomization.yaml`](../hack/capture/npd/kustomization.yaml)
+pins both, and changes nothing else:
+
+```sh
+kubectl apply -k hack/capture/npd                     # install
+kubectl -n kube-system rollout status daemonset node-problem-detector
+kubectl -n kube-system logs daemonset/node-problem-detector | grep -i monitor   # all three started
+kubectl delete -k hack/capture/npd                    # uninstall; then clear its conditions (4.7)
+```
+
+The inventory has no field for tool versions (unknown fields are errors),
+so the NPD version is recorded here and in each run's log by the capture
+driver (4.7), not in the inventory.
+
+Why stock, and why without Tropis's SMART plugin
+([hack/npd-plugin](../hack/npd-plugin/README.md)): stock NPD is what an
+adopter's cluster has today, and the plugin is not upstream; the plugin runs
+the same rules as Tropis's own pre-filter, which is already a trigger in
+both variants, so enabling it would test nothing new; and NPD conditions
+never reach the model either way (AGENTS.md), so what the variant measures
+is whether NPD's own conditions change which nodes get raised.
+
+Monitors enabled (upstream's DaemonSet passes
+`--config.system-log-monitor=/config/kernel-monitor.json,/config/readonly-monitor.json,/config/docker-monitor.json`;
+no custom-plugin or system-stats monitor). What each can do in our
+scenarios, from the v1.37.0 configs:
+
+| Monitor | Reads | Conditions (start `False`) and events | Expected here |
+|---|---|---|---|
+| `kernel-monitor` | `/dev/kmsg` | `KernelDeadlock`, `ReadonlyFilesystem`; events `OOMKilling`, `TaskHung`, `UnregisterNetDevice`, `KernelOops`, `MemoryReadError` | `ReadonlyFilesystem=True` on #13 `write-errors-readonly-remount` and #16 `fs-corruption-readonly` (rule `Remounting filesystem read-only`, which ext4 prints under `errors=remount-ro`). A `TaskHung` event is possible on #14/#15 if a task blocks past `hung_task_timeout_secs` (120 s). `OOMKilling` is not expected: its pattern is the older two-line "Kill process … or sacrifice child" message, which the 6.8 kernel does not print. `KernelDeadlock` only on a hung *docker* task: never |
+| `readonly-monitor` | `/dev/kmsg` | `ReadonlyFilesystem` (the same rule, with metrics) | as above |
+| `docker-monitor` | journald, source `dockerd` | events `CorruptDockerImage` only | never: kubespray runs containerd and nothing logs as `dockerd` |
+
+**containerd.** kubespray's runtime is containerd, and stock NPD watches
+docker. Upstream does ship containerd configs
+(`health-checker-containerd.json`, and `FrequentContainerdRestart` in
+`systemd-monitor-counter.json`) but its DaemonSet enables none of them, so
+#24 `containerd-kill-stable-defects` will carry no NPD condition about
+containerd in its `npd-present` fixture. That is the adopter's default,
+and it is what this variant records. (The dev corpus's synthetic hint for
+#24, `npd: containerd-restart`, assumes otherwise; it affects only
+`eval/testdata`.) The conditions NPD sets on every node from start-up,
+`KernelDeadlock` and `ReadonlyFilesystem` at `False`, are what tells
+`capture` the variant is present.
+
 ### 4.4 Inventory
 
 Copy [`hack/inventory.example.yaml`](../hack/inventory.example.yaml) to
@@ -443,11 +494,43 @@ and do them all again with it present. For each scenario:
 7. **Stop** the fault: `hack/inject/<script> stop >> fault.json`. Keep the
    records with the run log (not in `eval/fixtures/`).
 
-**Switching variant.** Install upstream node-problem-detector as a DaemonSet
-and wait until `kubectl get node worker-02 -o yaml` shows its conditions;
-`capture` refuses `npd-present` otherwise. Going back to `npd-absent` needs
-NPD uninstalled *and* its conditions removed from the node status
-(`kubectl edit node worker-02 --subresource=status`), or capture refuses.
+**Switching variant.** To `npd-present`: install NPD as in 4.3 and wait
+until the node carries its conditions; `capture` refuses `npd-present`
+otherwise:
+
+```sh
+kubectl apply -k hack/capture/npd
+kubectl -n kube-system rollout status daemonset node-problem-detector
+kubectl get node worker-02 -o jsonpath='{.status.conditions[*].type}'   # includes KernelDeadlock ReadonlyFilesystem
+```
+
+Back to `npd-absent` needs NPD uninstalled *and* its conditions removed
+from the node status, or capture refuses (it counts every condition the
+kubelet does not own). NPD does not remove them when it goes; the kubelet
+only ever writes its own five, so replacing the list with those five
+removes NPD's for good:
+
+```sh
+kubectl delete -k hack/capture/npd
+kubectl -n kube-system wait --for=delete pod -l app=node-problem-detector --timeout=2m
+kubectl get node worker-02 -o json |
+  jq '{status: {conditions: [.status.conditions[] |
+      select(.type | IN("Ready","MemoryPressure","DiskPressure","PIDPressure","NetworkUnavailable"))]}}' \
+  > kubelet-conditions.json
+kubectl patch node worker-02 --subresource=status --type=merge --patch-file kubelet-conditions.json
+kubectl get node worker-02 -o jsonpath='{.status.conditions[*].type}'   # only the kubelet's five
+```
+
+(A JSON merge patch replaces the whole list. The five are the kubelet's
+conditions as `pkg/k8s` defines them.)
+
+**Between `npd-present` scenarios.** `ReadonlyFilesystem` is a permanent
+condition: once #13 or #16 sets it `True`, NPD leaves it `True` until it
+restarts, so the next scenario's fixture would carry a stale trigger. Before
+the next scenario, `kubectl -n kube-system rollout restart daemonset
+node-problem-detector` and wait until every NPD condition on the node is
+`False`. NPD re-reads five minutes of `/dev/kmsg` on start, so this can take
+up to five minutes after the remount. Do it at every `npd-present` reset.
 
 **Stable-defect block (S).** Install the scarred drive, set up as 4.6,
 then leave the collector running untouched for ≥ 24 h before the first
@@ -612,12 +695,33 @@ takes this place in both passes.
    `stable-defects-oom` on the no-disk variant, the two differ in exactly
    that. The dev corpus follows the manifests, and a test checks that each
    synthetic pod has a hostPath exactly when its workload does.
-8. **NPD install is unspecified.** Which NPD deployment, which monitors,
-   and whether `hack/npd-plugin`'s SMART plugin is enabled for
-   `npd-present` all change results and should be fixed before capture.
+8. ~~**NPD install is unspecified.**~~ *Resolved.* `npd-present` runs
+   stock upstream NPD v1.37.0 from its own manifests, pinned by commit and
+   image digest in `hack/capture/npd/kustomization.yaml`, with its default
+   monitors (`kernel-monitor`, `readonly-monitor`, `docker-monitor`) and
+   without Tropis's SMART plugin, which is not upstream and would only
+   repeat the pre-filter's rules (4.3). 4.3 lists which scenarios can
+   raise which condition (`ReadonlyFilesystem` on #13 and #16; nothing on
+   containerd, which stock NPD does not watch), and 4.7 gives install,
+   uninstall, clearing NPD's conditions from the node status, and
+   restarting NPD between `npd-present` scenarios to clear a permanent
+   condition. The inventory has no field for tool versions, so the
+   version is recorded in the run book.
 9. **Baseline configuration is unspecified.** Which Prometheus rules
    (stock kube-prometheus-stack, plus smartctl_exporter or not) and which
    k8sgpt invocation count as "the incumbent".
 10. **No reset tooling.** Restarting the collector to reset history, mkfs
     and namespace cleanup between scenarios are manual; a `hack/` capture
     driver per scenario would reduce operator error over 60 captures.
+11. **NPD's events reach the model in `npd-present`.** NPD reports
+    through Node events as well as conditions: an event for each temporary
+    rule (`TaskHung`, for one) and one for each condition change (reason
+    `FilesystemIsReadOnly`, source `kernel-monitor`). The collector keeps
+    the node's events and `reason.BuildInput` passes events to the model,
+    so in the `npd-present` variant NPD's summary of the kernel log reaches
+    the model as evidence. The AGENTS.md rule on NPD forbids that, and
+    `npd-absent` has no equivalent (v1 reads no kernel log), so the two
+    variants would differ in evidence, not only in triggers. Not changed
+    with the NPD install: filtering them changes the model input, which
+    needs a new `PromptVersion`, and it must be decided before the
+    `npd-present` pass.

@@ -1,0 +1,23 @@
+# Stock node-problem-detector for the capture rig's npd-present variant.
+#
+# Upstream's own manifests (deployment/ in kubernetes/node-problem-detector),
+# unmodified, at release v1.37.0 (pinned 2026-10-19 by its commit, since a
+# tag can move). Only the image changes: upstream's DaemonSet still names
+# v0.8.19, so it is set to the same release's image, by digest.
+#
+# Its default monitors are kernel-monitor, readonly-monitor and
+# docker-monitor. Tropis's SMART plugin (hack/npd-plugin) is deliberately not
+# installed: see docs/capture-rig.md, 4.3.
+#
+#   kubectl apply -k hack/capture/npd     # install
+#   kubectl delete -k hack/capture/npd    # uninstall; then clear its
+#                                         # conditions (capture-rig.md 4.7)
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  # v1.37.0
+  - https://github.com/kubernetes/node-problem-detector//deployment?ref=7dad835ec831225db2a8090bde46430970bfcc9b
+images:
+  - name: registry.k8s.io/node-problem-detector/node-problem-detector
+    # v1.37.0
+    digest: sha256:a222c1bc31efe64a5698e8ba4ac7acf7f09f065eb2fbfb5c436488439decd69a

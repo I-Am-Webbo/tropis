@@ -103,6 +103,7 @@ test guards a rule, do not weaken the test to make a change pass.
 | `pkg/pipeline` | Live path, shared with the eval runner |
 | `eval/` | Scenarios, dev corpus, runner, report, capture (see `eval/README.md`) |
 | `hack/inject`, `hack/symptoms`, `hack/npd-plugin` | Fault injection (records feed labels); symptom helpers such as a silent container kill (run log only, never a label); NPD plugin wrapper |
+| `hack/capture` | Capture-rig setup: the pinned stock NPD install for the `npd-present` variant (`npd/`) |
 | `deploy/helm/tropis` | The chart |
 | `deploy/helm/tropis/examples` | Values file per model profile, linted by `make helm-lint`; compared in `docs/model-profiles.md` |
 | `docs/capture-rig.md` | Capture rig hardware, scenario coverage and run book |
