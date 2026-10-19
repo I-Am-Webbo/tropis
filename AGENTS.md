@@ -85,6 +85,8 @@ test guards a rule, do not weaken the test to make a change pass.
   `BackendInfo.Think` because it changes results.
 - **Injection scripts destroy data.** Only ever run them through
   `make inject-test` or on the capture rig. Never on a development machine.
+  The same goes for `hack/symptoms`, which SIGKILLs processes as root; a
+  symptom record goes to the run log, never into `fault.json` or a label.
 
 ## Where things are
 
@@ -97,7 +99,7 @@ test guards a rule, do not weaken the test to make a change pass.
 | `pkg/redact`, `pkg/reason` | Redaction; model input, prompt, output gate, backends |
 | `pkg/pipeline` | Live path, shared with the eval runner |
 | `eval/` | Scenarios, dev corpus, runner, report, capture (see `eval/README.md`) |
-| `hack/inject`, `hack/npd-plugin` | Fault injection; NPD plugin wrapper |
+| `hack/inject`, `hack/symptoms`, `hack/npd-plugin` | Fault injection (records feed labels); symptom helpers such as a silent container kill (run log only, never a label); NPD plugin wrapper |
 | `deploy/helm/tropis` | The chart |
 | `deploy/helm/tropis/examples` | Values file per model profile, linted by `make helm-lint`; compared in `docs/model-profiles.md` |
 | `docs/capture-rig.md` | Capture rig hardware, scenario coverage and run book |

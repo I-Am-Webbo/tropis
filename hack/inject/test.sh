@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# End-to-end test of every injection script against a loop device.
+# End-to-end test of every injection script against a loop device, and of
+# the symptom helper in hack/symptoms.
 #
 #   hack/inject/test.sh <tropis binary> <tropis-collector binary>
 #
@@ -33,7 +34,7 @@ fail() { echo "FAIL $*"; failures=$((failures + 1)); }
 
 cleanup() {
 	set +e
-	for f in degradation containerd-kill; do [ -f "$TROPIS_INJECT_STATE/$f.pid" ] && kill "$(cat "$TROPIS_INJECT_STATE/$f.pid")" 2>/dev/null; done
+	for f in degradation containerd-kill silent-kill; do [ -f "$TROPIS_INJECT_STATE/$f.pid" ] && kill "$(cat "$TROPIS_INJECT_STATE/$f.pid")" 2>/dev/null; done
 	pkill -KILL -x tropis-fake-ctd 2>/dev/null
 	umount "$MNT" 2>/dev/null
 	dmsetup remove tropis-target 2>/dev/null
@@ -196,6 +197,66 @@ rec="$(TROPIS_INJECT_CONFIRM=ci-node/containerd TROPIS_CONTAINERD_UNIT=tropis-no
 sleep 0.5
 pgrep -x tropis-fake-ctd >/dev/null && fail "containerd-kill: process survived" || pass "containerd-kill: process killed"
 rec="$("$HERE/containerd-kill.sh" stop)" && check_record containerd-kill "$rec" runtime.containerd_kill yes || fail "containerd-kill stop"
+
+# --- silent kill (a symptom helper, in hack/symptoms) ------------------------
+#
+# A fake crictl describes one pod and its container, whose pid is a stand-in
+# process. FAKE_NS and FAKE_EVAL let a test make the pod look like something
+# the helper must refuse to touch.
+
+mkdir -p "$WORK/bin"
+cat >"$WORK/bin/crictl" <<'EOF'
+#!/usr/bin/env bash
+case "$1" in
+pods) echo pod-1 ;;
+ps) echo ctr-1 ;;
+inspectp) printf '{"status":{"metadata":{"name":"batch-reader-x","namespace":"%s"},"labels":{"app":"batch-reader","tropis.io/eval":"%s"}}}\n' "${FAKE_NS:-tropis-eval}" "${FAKE_EVAL:-true}" ;;
+inspect) printf '{"status":{"labels":{"io.kubernetes.pod.namespace":"%s"}},"info":{"sandboxID":"pod-1","pid":%s}}\n' "${FAKE_NS:-tropis-eval}" "$(cat "$FAKE_PIDFILE")" ;;
+*) exit 1 ;;
+esac
+EOF
+chmod +x "$WORK/bin/crictl"
+silent() { PATH="$WORK/bin:$PATH" FAKE_PIDFILE="$WORK/fake.pid" TROPIS_INJECT_CONFIRM=ci-node/silent-kill APP=batch-reader "$@"; }
+victim() { sleep 600 & echo $! >"$WORK/fake.pid"; }
+
+victim
+rec="$(silent env KILLS=1 "$HERE/../symptoms/silent-kill.sh" start)"
+if printf '%s' "$rec" | jq -e '.symptom == "container.silent_kill" and (has("faultType") | not) and .params.app == "batch-reader"' >/dev/null 2>&1; then
+	pass "silent-kill: start record is a symptom record, not a fault record"
+else
+	fail "silent-kill: start record: $rec"
+fi
+sleep 0.5
+kill -0 "$(cat "$WORK/fake.pid")" 2>/dev/null && fail "silent-kill: process survived" || pass "silent-kill: process killed"
+wait "$(cat "$WORK/fake.pid")" 2>/dev/null
+[ $? -eq 137 ] && pass "silent-kill: exit status 137" || fail "silent-kill: exit status was not 137"
+rec="$(silent "$HERE/../symptoms/silent-kill.sh" stop)"
+printf '%s' "$rec" | jq -e '.endedAt and .params.killsDelivered == "1" and .params.containersKilled == "ctr-1"' >/dev/null 2>&1 &&
+	pass "silent-kill: stop record counts the kill" || fail "silent-kill: stop record: $rec"
+
+# Repeated kills: each one waits for the (here, replaced) process.
+victim
+silent env KILLS=2 INTERVAL=2 "$HERE/../symptoms/silent-kill.sh" start >/dev/null || fail "silent-kill: repeated start"
+sleep 0.5
+victim
+sleep 3
+kill -0 "$(cat "$WORK/fake.pid")" 2>/dev/null && fail "silent-kill: second kill not delivered" || pass "silent-kill: second kill delivered"
+rec="$(silent "$HERE/../symptoms/silent-kill.sh" stop)"
+printf '%s' "$rec" | jq -e '.params.killsDelivered == "2"' >/dev/null 2>&1 &&
+	pass "silent-kill: two kills recorded" || fail "silent-kill: repeated stop record: $rec"
+
+for refusal in "FAKE_NS=default" "FAKE_EVAL=false" "TROPIS_INJECT_CONFIRM=ci-node/containerd"; do
+	victim
+	if silent env "$refusal" KILLS=1 "$HERE/../symptoms/silent-kill.sh" start >/dev/null 2>&1; then
+		fail "silent-kill: acted with $refusal"
+		silent "$HERE/../symptoms/silent-kill.sh" stop >/dev/null 2>&1
+	else
+		pass "silent-kill: refuses with $refusal"
+	fi
+	kill -0 "$(cat "$WORK/fake.pid")" 2>/dev/null && pass "silent-kill: process untouched with $refusal" ||
+		fail "silent-kill: process killed with $refusal"
+	kill "$(cat "$WORK/fake.pid")" 2>/dev/null
+done
 
 # --- refusals ----------------------------------------------------------------
 

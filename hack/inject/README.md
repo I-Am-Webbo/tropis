@@ -19,6 +19,10 @@ block device. Read the safety section before running any of them.
 | `ephemeral-exhaustion.sh` | `storage.ephemeral_exhaustion` | none: the workload overruns its own ephemeral-storage limit; the script checks the node is safe and records the window | No |
 | `containerd-kill.sh` | `runtime.containerd_kill` | SIGKILL to containerd, once or repeatedly | No |
 
+Symptoms that are not faults, such as a container killed silently with exit
+137, have their own helpers in [hack/symptoms](../symptoms/README.md). They
+print no fault record, so nothing they do can reach a label.
+
 `ephemeral-exhaustion.sh` is the one script that injects nothing and
 destroys nothing. Its fault is a Kubernetes-layer one, a workload filling
 its own ephemeral storage, which lives on the kubelet's filesystem and so

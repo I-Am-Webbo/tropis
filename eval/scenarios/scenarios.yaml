@@ -363,7 +363,7 @@ scenarios:
       The collector cannot read SMART (the capability is withheld for this
       capture), and a pod has been killed with exit 137 leaving no logs or
       events. Nothing supports a judgement either way.
-    workload: batch-reader-hostpath
+    workload: batch-reader-silent
     expected: {relationship: insufficient_evidence}
     synthetic: {smart: unreadable, workload: silent-137}
 
@@ -373,7 +373,7 @@ scenarios:
       events to say whether it was an OOM kill or an I/O stall.
     faultType: disk.pending_sectors
     inject: {script: pending-sectors.sh}
-    workload: batch-reader-hostpath
+    workload: batch-reader-silent
     hardware: [real-sata]
     expectSmart: [pending_sectors]
     expected: {relationship: insufficient_evidence}
