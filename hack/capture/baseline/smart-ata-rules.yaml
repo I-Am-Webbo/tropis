@@ -1,0 +1,47 @@
+# SATA SMART alerts for the capture rig's incumbent baseline. See
+# docs/capture-rig.md, 4.3.
+#
+# The smartctl-exporter chart's rules (and the community set at
+# awesome-prometheus-alerts) watch NVMe health, overall SMART status,
+# temperature and link speed, and nothing on the ATA counters the rig's SATA
+# faults move. A competent SATA operator watches those, so these add the two
+# checks smartd makes by default (smartd.conf -a includes -C 197 -U 198:
+# warn while Current_Pending_Sector or Offline_Uncorrectable is non-zero) and
+# the reallocated-sector growth alert Mirantis StackLight ships (raw
+# Reallocated_Sector_Ct rising), rewritten for smartctl_exporter's metric.
+# They were fixed before any capture and are not tuned to any result.
+#
+# The growth window is an hour, not StackLight's ten minutes, because the
+# baseline is read at least 15 minutes after the symptom (capture-rig.md 4.7):
+# a reallocation at injection time must still be inside the window.
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: smart-ata
+  namespace: monitoring
+  labels: {release: kube-prometheus-stack}
+spec:
+  groups:
+    - name: smart-ata
+      rules:
+        - alert: SmartATAPendingSectors
+          expr: smartctl_device_attribute{attribute_id="197", attribute_value_type="raw"} > 0
+          for: 1m
+          labels: {severity: warning}
+          annotations:
+            summary: Device has pending sectors
+            description: Device {{ $labels.device }} on instance {{ $labels.instance }} has {{ $value }} sectors pending reallocation (Current_Pending_Sector).
+        - alert: SmartATAOfflineUncorrectable
+          expr: smartctl_device_attribute{attribute_id="198", attribute_value_type="raw"} > 0
+          for: 1m
+          labels: {severity: warning}
+          annotations:
+            summary: Device has offline-uncorrectable sectors
+            description: Device {{ $labels.device }} on instance {{ $labels.instance }} has {{ $value }} offline-uncorrectable sectors (Offline_Uncorrectable).
+        - alert: SmartATAReallocatedSectorsGrowing
+          expr: delta(smartctl_device_attribute{attribute_id="5", attribute_value_type="raw"}[1h]) > 0
+          for: 1m
+          labels: {severity: warning}
+          annotations:
+            summary: Device is reallocating sectors
+            description: Device {{ $labels.device }} on instance {{ $labels.instance }} reallocated {{ $value }} more sectors in the last hour (Reallocated_Sector_Ct).

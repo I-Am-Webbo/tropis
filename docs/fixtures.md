@@ -87,9 +87,12 @@ The same applies to Kubernetes objects, stored as raw API JSON.
 
 ### Baseline capture
 
-Every fixture records what a stock Prometheus/Alertmanager setup had firing
-and what k8sgpt alone concluded. Uplift over the incumbent is the claim that
-matters, and capturing it later would mean re-running every injection.
+Every fixture records what the incumbent's Prometheus had firing and what
+k8sgpt alone concluded. The incumbent is kube-prometheus-stack with its
+default rules plus smartctl_exporter and SATA SMART rules, and k8sgpt
+without an LLM; [capture-rig.md](capture-rig.md), 4.3, pins the versions
+and says why. Uplift over the incumbent is the claim that matters, and
+capturing it later would mean re-running every injection.
 
 ## `label.json`
 

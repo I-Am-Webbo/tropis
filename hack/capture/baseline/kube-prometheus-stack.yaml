@@ -1,0 +1,15 @@
+# Values for the capture rig's incumbent: kube-prometheus-stack 92.10.1,
+# release name kube-prometheus-stack, namespace monitoring. See
+# docs/capture-rig.md, 4.3.
+#
+# Its default rules are the baseline, so nothing here touches a rule. The
+# only change from the chart's defaults is placement: the heavy parts run on
+# worker-01, off the capture worker.
+prometheus:
+  prometheusSpec:
+    nodeSelector: {kubernetes.io/hostname: worker-01}
+alertmanager:
+  alertmanagerSpec:
+    nodeSelector: {kubernetes.io/hostname: worker-01}
+grafana:
+  nodeSelector: {kubernetes.io/hostname: worker-01}

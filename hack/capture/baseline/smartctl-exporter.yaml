@@ -1,0 +1,17 @@
+# Values for prometheus-community/prometheus-smartctl-exporter 0.17.1
+# (smartctl_exporter v0.14.0), release name smartctl-exporter, namespace
+# monitoring. See docs/capture-rig.md, 4.3.
+#
+# The chart's own alert rules are turned on unchanged, and its ServiceMonitor
+# and PrometheusRule carry the label kube-prometheus-stack selects on.
+serviceMonitor:
+  enabled: true
+  extraLabels: {release: kube-prometheus-stack}
+prometheusRules:
+  enabled: true
+  extraLabels: {release: kube-prometheus-stack}
+# The chart's RoleBinding grants a PodSecurityPolicy ClusterRole that no
+# current cluster has. The exporter needs no Kubernetes API access at all:
+# it is a privileged root container reading /dev with smartctl.
+rbac:
+  create: false

@@ -184,8 +184,8 @@ type K8sCapture struct {
 
 // Baseline records what existing tooling concluded about the same scenario.
 type Baseline struct {
-	// PrometheusAlerts lists alerts a stock Prometheus/Alertmanager setup had
-	// firing at capture time.
+	// PrometheusAlerts lists alerts the incumbent Prometheus setup had
+	// firing at capture time (docs/capture-rig.md, 4.3).
 	PrometheusAlerts []string `json:"prometheusAlerts,omitempty"`
 
 	// K8sGPTOutput is what k8sgpt alone concluded, verbatim.
