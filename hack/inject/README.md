@@ -103,6 +103,10 @@ difference impossible to lose.
 
 4. Inject, wait for symptoms, capture while the fault is active, then stop:
 
+   (On the capture rig, `hack/capture/run-scenario.sh` does this and the
+   reset around it for one scenario; see [hack/capture](../capture/README.md).
+   The steps below are what it runs.)
+
    ```sh
    hack/inject/read-errors.sh start > fault.json
    # ... let the workload hit the fault ...

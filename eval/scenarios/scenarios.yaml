@@ -26,6 +26,12 @@
 # one unless every device it tried reads as permission denied and none was
 # readable. See docs/capture-rig.md, 4.7.
 #
+# `inject.target` aims a bad-sector or corruption fault at the workload's own
+# data: a path under the target disk's mountpoint (a glob picks the newest
+# match) or postgres:<table>. `symptom` names a helper under hack/symptoms
+# for a symptom no fault produces. hack/capture/run-scenario.sh reads both,
+# with the rest of each scenario, through `tropis scenario show`.
+#
 # `synthetic` hints are used only to generate the development corpus under
 # eval/testdata. They are never used on the rig.
 scenarios:
@@ -38,7 +44,7 @@ scenarios:
       hostPath on the target disk. Reads of the marked sectors fail and
       postgres panics on fsync. Timing, storage path and symptom all connect.
     faultType: disk.pending_sectors
-    inject: {script: pending-sectors.sh}
+    inject: {script: pending-sectors.sh, target: "postgres:t"}
     workload: postgres-hostpath
     hardware: [real-sata]
     expectSmart: [pending_sectors]
@@ -50,7 +56,7 @@ scenarios:
       A log-writing service on a hostPath hits newly pending sectors and
       crash-loops on read I/O errors when replaying its segment files.
     faultType: disk.pending_sectors
-    inject: {script: pending-sectors.sh}
+    inject: {script: pending-sectors.sh, target: "log-writer/segment-*"}
     workload: log-writer-hostpath
     hardware: [real-sata]
     expectSmart: [pending_sectors]
@@ -62,7 +68,7 @@ scenarios:
       A batch job reading a dataset from the target disk fails on the pending
       sectors and retries into CrashLoopBackOff.
     faultType: disk.pending_sectors
-    inject: {script: pending-sectors.sh}
+    inject: {script: pending-sectors.sh, target: "batch/dataset"}
     workload: batch-reader-hostpath
     hardware: [real-sata]
     expectSmart: [pending_sectors]
@@ -74,7 +80,7 @@ scenarios:
       Pending sectors make the drive retry internally; reads stall for
       seconds and postgres's liveness probe times out and restarts it.
     faultType: disk.pending_sectors
-    inject: {script: pending-sectors.sh}
+    inject: {script: pending-sectors.sh, target: "postgres:t"}
     workload: postgres-hostpath
     hardware: [real-sata]
     expectSmart: [pending_sectors]
@@ -138,7 +144,7 @@ scenarios:
       for a failing cable or controller; the evidence is the I/O errors in a
       workload whose storage is a hostPath on the target disk.
     faultType: disk.read_errors
-    inject: {script: read-errors.sh}
+    inject: {script: read-errors.sh, target: "postgres:t"}
     workload: postgres-hostpath
     expected: {relationship: causal, rootCauseLayer: host}
     synthetic: {smart: healthy, workload: io-error-crashloop}
@@ -149,7 +155,7 @@ scenarios:
       reallocated count, and there are also genuine read errors under the
       workload now. The stable count is not the story, but the disk is.
     faultType: disk.read_errors
-    inject: {script: read-errors.sh}
+    inject: {script: read-errors.sh, target: "log-writer/segment-*"}
     workload: log-writer-hostpath
     hardware: [scarred-sata]
     expected: {relationship: causal, rootCauseLayer: host}
@@ -210,7 +216,7 @@ scenarios:
       An inode under the workload's directory is corrupted; ext4 reports the
       checksum failure and remounts read-only.
     faultType: disk.fs_corruption
-    inject: {script: fs-corruption.sh}
+    inject: {script: fs-corruption.sh, target: "log-writer/segment-*"}
     workload: log-writer-hostpath
     expected: {relationship: causal, rootCauseLayer: host}
     synthetic: {smart: healthy, workload: readonly-fs, npd: readonly-fs}
@@ -220,7 +226,7 @@ scenarios:
       A data file's inode is corrupted; the application fails reading it with
       "Structure needs cleaning" and crash-loops.
     faultType: disk.fs_corruption
-    inject: {script: fs-corruption.sh}
+    inject: {script: fs-corruption.sh, target: "batch/dataset"}
     workload: batch-reader-hostpath
     expected: {relationship: causal, rootCauseLayer: host}
     synthetic: {smart: healthy, workload: fs-corrupt}
@@ -230,7 +236,7 @@ scenarios:
       A batch reader hits unreadable blocks in its input dataset and fails;
       SMART is clean.
     faultType: disk.read_errors
-    inject: {script: read-errors.sh}
+    inject: {script: read-errors.sh, target: "batch/dataset"}
     workload: batch-reader-hostpath
     expected: {relationship: causal, rootCauseLayer: host}
     synthetic: {smart: healthy, workload: io-error-crashloop}
@@ -369,6 +375,7 @@ scenarios:
       capture), and a pod has been killed with exit 137 leaving no logs or
       events. Nothing supports a judgement either way.
     workload: batch-reader-silent
+    symptom: {script: silent-kill.sh, params: {APP: batch-reader, KILLS: "3", INTERVAL: "60"}}
     hardware: [smart-withheld]
     expected: {relationship: insufficient_evidence}
     synthetic: {smart: unreadable, workload: silent-137}
@@ -380,6 +387,7 @@ scenarios:
     faultType: disk.pending_sectors
     inject: {script: pending-sectors.sh}
     workload: batch-reader-silent
+    symptom: {script: silent-kill.sh, params: {APP: batch-reader, KILLS: "3", INTERVAL: "60"}}
     hardware: [real-sata]
     expectSmart: [pending_sectors]
     expected: {relationship: insufficient_evidence}

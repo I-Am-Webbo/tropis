@@ -75,13 +75,17 @@ check-generated: generate ## Fail if generated files are out of date
 npd-test: build ## Test the NPD plugin wrapper honours NPD's exit-code protocol
 	sh hack/npd-plugin/test.sh "$(CURDIR)/$(BIN)/tropis-collector$(EXE)" "$(CURDIR)/pkg/host/smart/testdata"
 
+.PHONY: capture-test
+capture-test: build ## Dry-run the capture driver over every scenario in both NPD variants (no cluster or disk)
+	bash hack/capture/test.sh "$(CURDIR)/$(BIN)/tropis$(EXE)"
+
 .PHONY: helm-lint
 helm-lint: ## Lint the Helm chart and each example values file (helm)
 	helm lint $(CHART)
 	for f in $(CHART)/examples/*.yaml; do helm lint $(CHART) -f "$$f"; done
 
 .PHONY: check
-check: fmt-check vet test check-generated npd-test helm-lint ## Everything that needs no Docker: run before pushing
+check: fmt-check vet test check-generated npd-test capture-test helm-lint ## Everything that needs no Docker: run before pushing
 
 ##@ Integration (Docker)
 
