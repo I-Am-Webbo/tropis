@@ -103,9 +103,14 @@ reason="$($K -n default get events.events.k8s.io --field-selector "regarding.nam
 echo "event on $node: $reason"
 
 step "capture a fixture from the live node and replay it"
-# A scenario with no injected fault and no hardware requirement (kind has no
-# scarred drive), captured from the live node: this checks
-# the capture-to-score loop end to end, not any diagnosis.
+# The one scenario with no injected fault, captured from the live node: this
+# checks the capture-to-score loop end to end, not any diagnosis. It declares
+# hardware smart-withheld, so SMART is withheld as the run book does it
+# (capture-rig.md 4.7): the collector, still privileged, runs as a non-root
+# user, and capture refuses unless every disk read as permission denied.
+$K -n "$NS" patch daemonset tropis-collector --type=json \
+	-p '[{"op":"replace","path":"/spec/template/spec/containers/0/securityContext/runAsUser","value":65534}]' >/dev/null
+$K -n "$NS" rollout status daemonset tropis-collector --timeout=180s >/dev/null
 work="$(mktemp -d)"
 cat >"$work/inventory.yaml" <<EOF
 apiVersion: tropis.io/v1alpha1
@@ -123,6 +128,7 @@ go run ./cmd/tropis capture --kubeconfig "$kubeconfig" --namespace "$NS" \
 	--node "$node" --inventory "$work/inventory.yaml" --corpus "$work/corpus" --alerts-file /dev/null
 go run ./cmd/tropis eval --corpus "$work/corpus" --backend mock --out "$work/results" --quiet
 grep -q '"synthetic": false' "$work/results/results.json" || { echo "the capture was not recorded as real"; exit 1; }
+$K -n "$NS" rollout undo daemonset tropis-collector >/dev/null
 rm -rf "$work"
 echo ok
 
