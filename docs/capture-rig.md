@@ -176,16 +176,16 @@ All scenarios run on `worker-02`; `TROPIS_DISK` is the drive's inventory id.
 
 | # | Scenario | Expected | Drive | Fault produced by | Notes |
 |---|---|---|---|---|---|
-| 1 | pending-sectors-postgres | causal/host | C, `real-sata` | `pending-sectors.sh` (hdparm) | target LBAs under postgres data (run book 8) |
-| 2 | pending-sectors-log-writer | causal/host | C, `real-sata` | `pending-sectors.sh` | target log-writer segments |
-| 3 | pending-sectors-batch-reader | causal/host | C, `real-sata` | `pending-sectors.sh` | target `batch/dataset` |
-| 4 | pending-sectors-slow-probes | causal/host | C, `real-sata` | `pending-sectors.sh` | stalls depend on the drive's retry behaviour |
+| 1 | pending-sectors-postgres | causal/host | C, `real-sata` | `pending-sectors.sh` (hdparm) | `target-blocks.sh` on the postgres table file (4.7 step 3) |
+| 2 | pending-sectors-log-writer | causal/host | C, `real-sata` | `pending-sectors.sh` | `target-blocks.sh` on a `log-writer/segment-*` file; inject straight after, as the writer rewrites them |
+| 3 | pending-sectors-batch-reader | causal/host | C, `real-sata` | `pending-sectors.sh` | `target-blocks.sh` on `batch/dataset` |
+| 4 | pending-sectors-slow-probes | causal/host | C, `real-sata` | `pending-sectors.sh` | `target-blocks.sh` on the postgres table file; stalls depend on the drive's retry behaviour |
 | 5 | degradation-postgres-gradual | causal/host | D, `real-sata` | `degradation.sh` STEP=4 INTERVAL=300 | reallocated must rise |
 | 6 | degradation-minio | causal/host | D, `real-sata` | `degradation.sh` STEP=4 INTERVAL=300 | |
 | 7 | degradation-fsync | causal/host | D, `real-sata` | `degradation.sh` STEP=8 INTERVAL=120 | |
 | 8 | degradation-slow-probes | causal/host | D, `real-sata` | `degradation.sh` STEP=4 INTERVAL=300 | |
-| 9 | read-errors-postgres | causal/host | C, dm | `read-errors.sh` (dm-dust) | BAD_BLOCKS under postgres data |
-| 10 | read-errors-with-stable-defects | causal/host | **S**, `scarred-sata`, dm | `read-errors.sh` + natural stable defects | |
+| 9 | read-errors-postgres | causal/host | C, dm | `read-errors.sh` (dm-dust) | `target-blocks.sh` on the postgres table file |
+| 10 | read-errors-with-stable-defects | causal/host | **S**, `scarred-sata`, dm | `read-errors.sh` + natural stable defects | `target-blocks.sh` on a `log-writer/segment-*` file; inject straight after, as the writer rewrites them |
 | 11 | write-errors-postgres | causal/host | C, dm | `write-errors.sh` (dm-flakey) | |
 | 12 | write-errors-intermittent-uploads | causal/host | C, dm | `write-errors.sh` UP_SECS=25 DOWN_SECS=5 | |
 | 13 | write-errors-readonly-remount | causal/host | C, dm | `write-errors.sh` | ext4 needs `errors=remount-ro` |
@@ -193,7 +193,7 @@ All scenarios run on `worker-02`; `TROPIS_DISK` is the drive's inventory id.
 | 15 | io-timeout-log-writer | causal/host | C, dm | `io-timeouts.sh` DELAY_MS=15000 | known not raised |
 | 16 | fs-corruption-readonly | causal/host | C | `fs-corruption.sh` | VICTIM in `log-writer/`; mkfs after |
 | 17 | fs-corruption-app-errors | causal/host | C | `fs-corruption.sh` | VICTIM=`batch/dataset`; mkfs after |
-| 18 | read-errors-batch | causal/host | C, dm | `read-errors.sh` | BAD_BLOCKS under `batch/dataset` |
+| 18 | read-errors-batch | causal/host | C, dm | `read-errors.sh` | `target-blocks.sh` on `batch/dataset` |
 | 19 | exhaustion-log-spam | causal/k8s | C (idle) | `ephemeral-exhaustion.sh`, then the `log-spam` workload | container exceeds its ephemeral-storage limit and is evicted; see 4.7 |
 | 20 | exhaustion-emptydir | causal/k8s | C (idle) | `ephemeral-exhaustion.sh`, then the `emptydir-filler` workload | emptyDir exceeds its `sizeLimit` and the pod is evicted; see 4.7 |
 | 21 | stable-defects-config-crash | coincidental | **S**, `scarred-sata` | natural defects; no injection | collector up ≥ 24 h on S |
@@ -350,6 +350,29 @@ and do them all again with it present. For each scenario:
 3. **Inject** with the scenario's `params` as environment variables:
    `STEP=4 INTERVAL=300 hack/inject/degradation.sh start > fault.json`.
    Skip for scenarios with no `inject`.
+
+   **Targeting a workload's data.** Where the matrix says to target a
+   file, compute the sectors under it with `hack/inject/target-blocks.sh`
+   before injecting (it refuses while a fault is active), and pass them
+   explicitly:
+
+   ```sh
+   eval "$(hack/inject/target-blocks.sh /mnt/disks/sacrificial/batch/dataset)"
+   SECTORS="$SECTORS" hack/inject/pending-sectors.sh start > fault.json    # or
+   BAD_BLOCKS="$BAD_BLOCKS" hack/inject/read-errors.sh start > fault.json
+   ```
+
+   It prints four sectors (`COUNT`, at most 64) spread through the file,
+   one per filesystem block, as physical LBAs (`SECTORS`, for hdparm) and
+   as 512-byte blocks of `/dev/mapper/tropis-target` (`BAD_BLOCKS`, for
+   dm-dust); with the pass-through at offset 0 on a whole disk they are the
+   same numbers. It reads the filesystem block size and the table's offset
+   rather than assuming them, and refuses a file that is not on the
+   tropis-target filesystem. The variables are not exported, so a later
+   scenario that wants the mid-disk default still gets it. For postgres,
+   the file is its table's: `kubectl -n tropis-eval exec postgres-0 -c
+   postgres -- psql -U postgres -Atc "select pg_relation_filepath('t')"`
+   gives a path under `/mnt/disks/sacrificial/postgres/pgdata/`.
 
    **Exhaustion scenarios swap steps 2 and 3**, because the workload is the
    fault: `hack/inject/ephemeral-exhaustion.sh start > fault.json` first,
@@ -520,7 +543,7 @@ takes this place in both passes.
 | Drive rejects WRITE UNCORRECTABLE or pending does not move | No `real-sata` pending scenarios on that drive | Acceptance test (4.6) before relying on a drive; keep a spare clean drive |
 | Drive degrades too fast (scarred drive starts growing pending/realloc) | Stable-defect fixtures become causal-looking; drive may die mid-block | Screen with a 48 h soak; capture the S block promptly; check counters before each capture; have a second scarred candidate |
 | Natural defects are unrepeatable | A scarred drive that changes cannot be "reset", and a retake will show different SMART | Capture the S block once, both variants back to back; keep the drive and its screening record; accept that a lost scarred drive means re-screening a new one |
-| Symptoms don't appear (bad sectors not under the workload, page cache hides reads) | Fixture records a fault with no symptom, which is a different scenario | Target LBAs from the workload's files; drop caches; check the symptom before capturing |
+| Symptoms don't appear (bad sectors not under the workload, page cache hides reads) | Fixture records a fault with no symptom, which is a different scenario | Target the workload's files with `target-blocks.sh`; drop caches; check the symptom before capturing |
 | Exhaustion workload not evicted (limit enforcement off, or a dedicated image filesystem) | 4 positives cannot be captured truthfully | `ephemeral-exhaustion.sh` refuses a dedicated image filesystem; confirm the pod is `Evicted` for local storage before capturing, and treat no eviction as a setup failure |
 | Power cut or reboot mid-block | Collector history lost; dm state lost; fs damage | UPS; after any reboot, restart the block's soak and reset |
 
@@ -553,10 +576,14 @@ takes this place in both passes.
    both (non-zero pending means the drive is actively failing, and the
    expected answers assume it is not). The age of that reading is not checked; the 24 h soak in 4.7 is
    still the operator's job.
-4. **No helper to target a workload's blocks.** `SECTORS`/`BAD_BLOCKS`
-   default to mid-disk. Until one exists, compute them by hand: with ext4
-   made directly on `/dev/mapper/tropis-target` (offset 0, 4 KiB blocks),
-   `filefrag -v -b4096 <file>` gives physical blocks; LBA = block × 8.
+4. ~~**No helper to target a workload's blocks.**~~ *Resolved.*
+   `hack/inject/target-blocks.sh <file>` prints `SECTORS` and `BAD_BLOCKS`
+   for four blocks spread through the file (4.7 step 3), reading the
+   filesystem block size from `filefrag` and the pass-through's offset
+   from `dmsetup`, and refusing a file off the tropis-target filesystem, a
+   table with a fault active, a partition and non-512-byte sectors.
+   `make inject-test` injects at the blocks it names and checks that the
+   file then fails to read while another file still reads.
 5. ~~**`silent-137` has no injection.**~~ *Resolved.* Both scenarios now
    run `batch-reader-silent` (the batch reader with no output, which
    neither prints nor exits on a failed read), and
