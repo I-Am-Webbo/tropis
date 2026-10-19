@@ -2,10 +2,13 @@ package devcorpus
 
 import (
 	"bytes"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"testing"
+
+	corev1 "k8s.io/api/core/v1"
 
 	"github.com/I-Am-Webbo/tropis/eval/scenarios"
 	"github.com/I-Am-Webbo/tropis/pkg/fixture"
@@ -115,5 +118,44 @@ func TestCorpusBuildsAnalysisInputs(t *testing.T) {
 	}
 	if len(byID["unreadable-smart-restarts"].Host.Unreadable) != 1 {
 		t.Error("unreadable archetype should parse as an unreadable device")
+	}
+}
+
+// A synthetic pod has storage on the target disk exactly when its scenario's
+// workload manifest mounts a hostPath, so the dev corpus never tells a
+// different storage story from the one the rig will capture.
+func TestCorpusHostPathsMatchWorkloadManifests(t *testing.T) {
+	all, err := scenarios.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases, err := fixture.LoadCorpus(committed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byID := map[string]scenarios.Scenario{}
+	for _, s := range all {
+		byID[s.ID] = s
+	}
+	for _, c := range cases {
+		s := byID[c.Fixture.ScenarioID]
+		manifest, err := os.ReadFile(filepath.Join("..", "scenarios", "workloads", s.Workload+".yaml"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := bytes.Contains(manifest, []byte("hostPath:"))
+		got := false
+		for _, raw := range c.Fixture.Kubernetes.Pods {
+			var p corev1.Pod
+			if err := json.Unmarshal(raw, &p); err != nil {
+				t.Fatalf("%s: %v", c.Dir, err)
+			}
+			for _, v := range p.Spec.Volumes {
+				got = got || v.HostPath != nil
+			}
+		}
+		if got != want {
+			t.Errorf("%s: fixture has a hostPath volume = %v, but workload %s mounts one = %v", c.Dir, got, s.Workload, want)
+		}
 	}
 }

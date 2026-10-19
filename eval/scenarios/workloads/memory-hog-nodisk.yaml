@@ -1,0 +1,29 @@
+# Allocates past its memory limit and is OOMKilled. It mounts no volume at
+# all, so nothing it does touches the target disk.
+apiVersion: v1
+kind: Namespace
+metadata: {name: tropis-eval}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: cache-warmer
+  namespace: tropis-eval
+  labels: {app: cache-warmer, tropis.io/eval: "true"}
+spec:
+  nodeSelector: {kubernetes.io/hostname: "${TROPIS_NODE}"}
+  containers:
+    - name: warmer
+      image: python:3.12-alpine
+      command:
+        - python
+        - -c
+        - |
+          import time
+          held = []
+          while True:
+              held.append(bytearray(16 * 1024 * 1024))
+              time.sleep(0.2)
+      resources:
+        requests: {cpu: 50m, memory: 64Mi}
+        limits: {memory: 128Mi}

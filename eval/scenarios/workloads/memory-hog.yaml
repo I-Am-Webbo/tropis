@@ -1,5 +1,6 @@
 # Allocates past its memory limit and is OOMKilled. Its data is on a hostPath
-# on the target disk, so the storage path exists but is not the cause.
+# on the target disk, so the storage path exists but is not the cause. For a
+# pod with no storage on the disk, use memory-hog-nodisk.
 apiVersion: v1
 kind: Namespace
 metadata: {name: tropis-eval}
