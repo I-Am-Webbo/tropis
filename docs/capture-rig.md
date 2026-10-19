@@ -261,9 +261,8 @@ use it, set `distribution: kubeadm`.
 
 Then:
 
-- **Prometheus baseline** on `worker-01`: kube-prometheus-stack with
-  default rules (Gaps: the baseline configuration is not yet decided).
-- **k8sgpt** CLI on the machine that runs captures.
+- **The baseline** (the incumbent; below): kube-prometheus-stack,
+  smartctl_exporter and the k8sgpt CLI.
 - **Tropis**, from the published chart, at one pinned release, with the
   matching `tropis` CLI from the same GitHub Release:
 
@@ -276,6 +275,116 @@ Then:
   needing an API key or sending anything off the rig. Do not upgrade or
   restart the chart during a block: the collector's SMART history is held
   in memory, and the stable-defect scenarios need 24 h of it.
+
+**The baseline** is what each fixture records the incumbent saw
+(`baseline` in `fixture.json`: firing alert names from Prometheus's
+`/api/v1/alerts`, and k8sgpt's output verbatim). Uplift over it is the
+claim that matters, so it is a **strong** incumbent rather than the bare
+"stock Prometheus" the project plan names: a team that runs bare-metal
+SATA and cares about disks would add SMART monitoring, and beating a
+baseline that cannot see disks at all would prove little. All versions
+are exact, pinned on 2026-10-19 from each project's latest release:
+
+| Component | Version | Configuration |
+|---|---|---|
+| kube-prometheus-stack (prometheus-community chart) | 92.10.1 | Default rules, unchanged. [`kube-prometheus-stack.yaml`](../hack/capture/baseline/kube-prometheus-stack.yaml) only places Prometheus, Alertmanager and Grafana on `worker-01` |
+| prometheus-smartctl-exporter (prometheus-community chart) | 0.17.1, exporter v0.14.0 (its default; v0.15.0 is out but no chart ships it yet) | The chart's own PrometheusRule turned on unchanged, and its ServiceMonitor; [`smartctl-exporter.yaml`](../hack/capture/baseline/smartctl-exporter.yaml) |
+| SATA SMART rules | [`smart-ata-rules.yaml`](../hack/capture/baseline/smart-ata-rules.yaml) | See below |
+| k8sgpt CLI | v0.4.40 | `analyze` with its default (core) analyzers, no `--explain`, so no LLM |
+
+Where the SMART alert rules come from: the exporter chart ships a
+PrometheusRule (Apache-2.0, installed from the chart rather than copied
+here) with six alerts: NVMe media errors, NVMe critical warning, NVMe
+available spare, overall SMART status, interface speed and temperature.
+The community set at awesome-prometheus-alerts (CC BY 4.0) covers the same
+ground. Neither has a rule on the ATA counters the rig's SATA faults move,
+so with them alone the SMART side of the incumbent could only fire if a
+drive failed its own overall assessment. `smart-ata-rules.yaml` adds three,
+written here rather than copied, after published practice: the two checks
+`smartd` makes by default (`-a` includes `-C 197 -U 198`: warn while
+`Current_Pending_Sector` or `Offline_Uncorrectable` is non-zero) and the
+reallocated-sector growth alert Mirantis StackLight ships, over an hour
+instead of ten minutes for the reason under *Alert durations*. They were
+fixed before any capture; never change them to suit a result.
+
+**Privileges.** The exporter is a privileged root container on every node
+with `/dev` mounted, running `smartctl` every 120 s
+(`collect_not_more_than_period`): it needs that to read SMART at all, as
+Tropis's collector does. It needs no Kubernetes API access, so the chart's
+RoleBinding (to a PodSecurityPolicy role that no longer exists) is off.
+k8sgpt only reads; it runs with the capture machine's kubeconfig. Prometheus
+needs nothing beyond the chart's defaults.
+
+Install, from a checkout of the repository:
+
+```sh
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm install kube-prometheus-stack prometheus-community/kube-prometheus-stack --version 92.10.1 \
+  -n monitoring --create-namespace -f hack/capture/baseline/kube-prometheus-stack.yaml
+helm install smartctl-exporter prometheus-community/prometheus-smartctl-exporter --version 0.17.1 \
+  -n monitoring -f hack/capture/baseline/smartctl-exporter.yaml
+kubectl apply -f hack/capture/baseline/smart-ata-rules.yaml
+```
+
+and k8sgpt on `worker-02`, which runs the captures:
+
+```sh
+v=v0.4.40
+curl -fsSLO https://github.com/k8sgpt-ai/k8sgpt/releases/download/$v/k8sgpt_Linux_x86_64.tar.gz
+curl -fsSLO https://github.com/k8sgpt-ai/k8sgpt/releases/download/$v/checksums.txt
+sha256sum --ignore-missing -c checksums.txt
+tar -xzf k8sgpt_Linux_x86_64.tar.gz k8sgpt && sudo install k8sgpt /usr/local/bin/
+k8sgpt version
+```
+
+**Quiet check.** With no scenario running and the cluster idle for 30
+minutes, the only firing alerts must be `Watchdog` (always firing, by
+design) and `InfoInhibitor`:
+
+```sh
+kubectl -n monitoring port-forward svc/prometheus-operated 9090 &
+curl -s localhost:9090/api/v1/alerts | jq -r '.data.alerts[] | select(.state=="firing") | .labels.alertname' | sort -u
+```
+
+Anything else would sit in every fixture's baseline and is a setup fault:
+fix the cause and record the fix with the run logs. A control-plane
+component or kube-proxy whose metrics endpoint listens only on 127.0.0.1,
+for instance, shows up as `TargetDown` or `Kube…Down`: set its bind
+address in kubespray's inventory and re-run it. Never silence a default
+rule to get there.
+
+**The k8sgpt command.** `tropis-eval` holds only the scenario's pods, all
+pinned to `worker-02`, so namespacing it there restricts it to the node
+under test (its `Node` analyzer is cluster-scoped and reports any node; the
+other two should be healthy). A config file of its own keeps any
+`active_filters` set on the machine from narrowing the analyzers:
+
+```sh
+echo 'active_filters: []' > k8sgpt.yaml
+k8sgpt --config k8sgpt.yaml analyze --namespace tropis-eval --no-cache --output text > k8sgpt.txt
+```
+
+`capture --k8sgpt-file k8sgpt.txt` stores it verbatim, header lines
+included. In `npd-present` its `Node` analyzer also lists NPD's conditions;
+that is the incumbent's view, and it is never model input.
+
+**Alert durations.** Most default rules hold an alert pending before it
+fires: `KubePodCrashLooping`, `KubePodNotReady`, the replica-mismatch
+alerts and `KubeJobFailed` need 15 minutes, `NodeDiskIOSaturation` 30
+minutes and `KubeContainerWaiting` an hour; the SMART rules need 1 minute
+after the exporter's next read (up to 2 minutes) and Prometheus's next
+scrape (1 minute). Read 2 minutes after injecting, as Tropis's own
+capture could be, the baseline would show almost nothing, and the uplift
+would be an artefact of timing. So the baseline is read, and the fixture
+captured, **15 minutes after the symptom is confirmed** (4.7 step 4). That
+gives the main Kubernetes alerts and every SMART alert their full
+duration. The 30-minute and hour-long ones are not waited for: they are
+not designed for an incident's first minutes, and holding a fault for an
+hour per capture would double the run. The wait goes into each fixture's
+`baseline.notes`, and the SMART growth rule's one-hour window is what keeps
+a reallocation made at injection inside it. Holding the fault longer is
+harmless to the fixture: capture checks the SMART change and the symptom
+state at the moment it runs, and Tropis's event window is six hours.
 
 **node-problem-detector** is installed only for the `npd-present` pass
 (4.7, *Switching variant*), never in 4.3's initial setup. It is **stock
@@ -394,7 +503,12 @@ and do them all again with it present. For each scenario:
    collector so its oldest snapshot is a pre-fault reading, and wait 2
    minutes (the collector rate-limits reads to one a minute). This is
    required: capture compares the drive against that reading and refuses
-   without it.
+   without it. Before the next workload, wait until no firing alert
+   carries `namespace="tropis-eval"` (the last scenario's
+   `KubePodCrashLooping` looks back five minutes), or it lands in this
+   scenario's baseline:
+   `curl -s localhost:9090/api/v1/alerts | jq '[.data.alerts[] | select(.state=="firing" and .labels.namespace=="tropis-eval")] | length'`
+   must print 0.
 2. **Workload.** `export TROPIS_NODE=worker-02 TROPIS_MOUNT=/mnt/disks/sacrificial`
    then `envsubst < eval/scenarios/workloads/<workload>.yaml | kubectl apply -f -`
    and wait until it is in steady state.
@@ -470,15 +584,28 @@ and do them all again with it present. For each scenario:
    `pending-sectors`; reallocated, attribute 5, for `degradation`, which can
    take several intervals). `degradation.sh start` itself returns only after
    the worker's first step.
-5. **Baseline.** `kubectl -n monitoring port-forward svc/prometheus-operated 9090`
-   and save `k8sgpt analyze` output to `k8sgpt.txt`.
+
+   Once the symptom is there, **wait 15 minutes more** before step 5, with
+   the fault still active, so the incumbent's alerts have had their `for:`
+   durations (4.3, *Alert durations*). Then check the symptom and, for a
+   `real-sata` scenario, the raised counter again: a symptom that has gone
+   is a setup failure, not a capture.
+5. **Baseline.** Prometheus's alerts are read by `capture` itself
+   (`--prometheus`); k8sgpt's output is saved first:
+
+   ```sh
+   kubectl -n monitoring port-forward svc/prometheus-operated 9090 &
+   echo 'active_filters: []' > k8sgpt.yaml
+   k8sgpt --config k8sgpt.yaml analyze --namespace tropis-eval --no-cache --output text > k8sgpt.txt
+   ```
 6. **Capture, while the fault is active:**
 
    ```sh
    tropis capture --scenario degradation-minio --variant npd-absent \
      --node worker-02 --disk degrader --inventory rig.yaml \
      --injection fault.json --prometheus http://localhost:9090 \
-     --k8sgpt-file k8sgpt.txt
+     --k8sgpt-file k8sgpt.txt \
+     --baseline-notes "kube-prometheus-stack 92.10.1 default rules; prometheus-smartctl-exporter 0.17.1 rules; hack/capture/baseline/smart-ata-rules.yaml; k8sgpt v0.4.40 analyze, core analyzers, no --explain; read 15 min after the symptom"
    ```
 
    Capture writes into `--corpus` (default `eval/fixtures`, the directory
@@ -610,13 +737,13 @@ takes this place in both passes.
 | Phase | Effort | Elapsed |
 |---|---|---|
 | Buy parts; drives arrive from several sellers | 2–3 h | 1–2 weeks |
-| Build, firmware, OS, `make inject-test REQUIRE_DUST=1`, kubespray, Prometheus, Tropis | 1–2 days | |
+| Build, firmware, OS, `make inject-test REQUIRE_DUST=1`, kubespray, baseline and quiet check, Tropis | 1–2 days | |
 | Screen drives (long self-test and surface scan ≈ 2–4 h per TB each, then 48 h soak) | 3–4 h hands-on | 3–4 days, overlaps the build |
-| Clean-drive block: 20 scenarios × 2 variants, ≈ 30–45 min each | 20–30 h | 1–2 weeks |
-| Scarred block: 24 h soak, then 5 × 2 | 6–8 h | 3 days |
-| Degrader block: 5 × 2, ≈ 1–1.5 h each (gradual faults) | 10–15 h | 1 week |
+| Clean-drive block: 20 scenarios × 2 variants, ≈ 45–60 min each (15 of them the baseline wait) | 30–40 h | 1–2 weeks |
+| Scarred block: 24 h soak, then 5 × 2 | 8–10 h | 3 days |
+| Degrader block: 5 × 2, ≈ 1.25–1.75 h each (gradual faults) | 12–18 h | 1 week |
 | Retakes, checks, commit, eval | 4–8 h | 2–3 days |
-| **Total** | **≈ 50–70 h** | **≈ 5–7 weeks** |
+| **Total** | **≈ 65–90 h** | **≈ 5–7 weeks** |
 
 ### Risks
 
@@ -707,9 +834,19 @@ takes this place in both passes.
    restarting NPD between `npd-present` scenarios to clear a permanent
    condition. The inventory has no field for tool versions, so the
    version is recorded in the run book.
-9. **Baseline configuration is unspecified.** Which Prometheus rules
-   (stock kube-prometheus-stack, plus smartctl_exporter or not) and which
-   k8sgpt invocation count as "the incumbent".
+9. ~~**Baseline configuration is unspecified.**~~ *Resolved.* The
+   incumbent is a strong one (4.3): kube-prometheus-stack 92.10.1 with its
+   default rules, smartctl_exporter (chart 0.17.1) with the chart's own
+   SMART rules plus three SATA rules after `smartd`'s defaults and
+   StackLight's growth alert (`hack/capture/baseline/smart-ata-rules.yaml`,
+   since no published rule set covers the ATA counters), and k8sgpt
+   v0.4.40 `analyze --namespace tropis-eval` with its core analyzers and no
+   `--explain`. Because the default Kubernetes alerts wait 15 minutes
+   before firing, the baseline and the fixture are taken 15 minutes after
+   the symptom is confirmed (4.7 step 4), and that is recorded in
+   `baseline.notes`; alerts with 30-minute or hour-long durations are not
+   waited for. A quiet check before the first capture keeps standing
+   alerts out of every baseline.
 10. **No reset tooling.** Restarting the collector to reset history, mkfs
     and namespace cleanup between scenarios are manual; a `hack/` capture
     driver per scenario would reduce operator error over 60 captures.
