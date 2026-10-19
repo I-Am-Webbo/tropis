@@ -293,7 +293,7 @@ scenarios:
     description: >
       Stable reallocated sectors on the disk; a pod is OOMKilled under a tight
       memory limit. Unrelated.
-    workload: memory-hog
+    workload: memory-hog-nodisk
     hardware: [scarred-sata]
     expected: {relationship: coincidental}
     synthetic: {smart: realloc-stable, workload: oom}
@@ -305,7 +305,7 @@ scenarios:
       current, unrelated.
     faultType: disk.pending_sectors
     inject: {script: pending-sectors.sh}
-    workload: memory-hog
+    workload: memory-hog-nodisk
     hardware: [real-sata]
     expectSmart: [pending_sectors]
     expected: {relationship: coincidental}

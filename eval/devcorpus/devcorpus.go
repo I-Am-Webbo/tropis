@@ -365,6 +365,8 @@ func appFor(workload string) (pod, container, volume string) {
 		return "batch-reader-x7k2p", "reader", "batch"
 	case "memory-hog":
 		return "cache-warmer", "warmer", "cache"
+	case "memory-hog-nodisk":
+		return "cache-warmer", "warmer", ""
 	case "config-crash":
 		return "checkout", "api", ""
 	case "log-spam":
@@ -388,11 +390,17 @@ func workloadFor(s scenarios.Scenario, at time.Time) (schema.K8sCapture, []strin
 	alerts := []string{"KubePodCrashLooping"}
 	k8sgpt := fmt.Sprintf("Pod tropis-eval/%s: back-off restarting failed container %s.", name, container)
 
+	// Each workload's volumes as its manifest declares them: a hostPath on
+	// the target disk, config-crash's configMap, or none at all.
 	volume := func() *corev1.Volume {
-		if vol == "" {
+		switch {
+		case vol != "":
+			return hostPathVolume(vol)
+		case s.Workload == "config-crash":
 			return &corev1.Volume{Name: "config", VolumeSource: corev1.VolumeSource{ConfigMap: &corev1.ConfigMapVolumeSource{LocalObjectReference: corev1.LocalObjectReference{Name: "checkout-config"}}}}
+		default:
+			return nil
 		}
-		return hostPathVolume(vol)
 	}
 	backoff := func() {
 		events = append(events, event(s.ID+"-backoff", "Pod", name, "Warning", "BackOff", "Back-off restarting failed container "+container+" in pod "+name, 14, evAt))

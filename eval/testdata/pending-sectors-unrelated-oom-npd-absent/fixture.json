@@ -375,14 +375,6 @@
           "uid": "pod-cache-warmer"
         },
         "spec": {
-          "volumes": [
-            {
-              "name": "data",
-              "hostPath": {
-                "path": "/mnt/disks/sacrificial/cache"
-              }
-            }
-          ],
           "containers": [
             {
               "name": "warmer",

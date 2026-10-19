@@ -197,11 +197,11 @@ All scenarios run on `worker-02`; `TROPIS_DISK` is the drive's inventory id.
 | 19 | exhaustion-log-spam | causal/k8s | C (idle) | `ephemeral-exhaustion.sh`, then the `log-spam` workload | container exceeds its ephemeral-storage limit and is evicted; see 4.7 |
 | 20 | exhaustion-emptydir | causal/k8s | C (idle) | `ephemeral-exhaustion.sh`, then the `emptydir-filler` workload | emptyDir exceeds its `sizeLimit` and the pod is evicted; see 4.7 |
 | 21 | stable-defects-config-crash | coincidental | **S**, `scarred-sata` | natural defects; no injection | collector up ≥ 24 h on S |
-| 22 | stable-defects-oom | coincidental | **S**, `scarred-sata` | natural defects | |
-| 23 | pending-sectors-unrelated-oom | coincidental | C, `real-sata` | `pending-sectors.sh` | default (mid-disk) LBAs, away from workload data |
+| 22 | stable-defects-oom | coincidental | **S**, `scarred-sata` | natural defects | `memory-hog-nodisk`: no storage on the disk |
+| 23 | pending-sectors-unrelated-oom | coincidental | C, `real-sata` | `pending-sectors.sh` | `memory-hog-nodisk` (no volumes); default (mid-disk) LBAs |
 | 24 | containerd-kill-stable-defects | coincidental | **S**, `scarred-sata` | `containerd-kill.sh` KILLS=5 INTERVAL=60 + natural defects | confirm is `<node>/containerd` |
 | 25 | read-errors-unused-region-config-crash | coincidental | C, dm | `read-errors.sh`, default mid-disk blocks | check no workload file sits there |
-| 26 | stable-defects-healthy-hostpath-oom | coincidental | **S**, `scarred-sata` | natural defects | |
+| 26 | stable-defects-healthy-hostpath-oom | coincidental | **S**, `scarred-sata` | natural defects | `memory-hog`: hostPath on the disk, by design |
 | 27 | pending-no-symptoms | insufficient | C, `real-sata` | `pending-sectors.sh` | `idle` workload |
 | 28 | unreadable-smart-restarts | insufficient | C | SMART withheld + manual SIGKILL | see Gaps |
 | 29 | pending-silent-137 | insufficient | C, `real-sata` | `pending-sectors.sh` + manual SIGKILL | see Gaps |
@@ -499,9 +499,14 @@ there is no override.
 6. **Withholding SMART is undocumented.** `unreadable-smart-restarts` says
    "the capability is withheld for this capture"; there is no documented
    procedure (and changing `collector.securityMode` restarts the collector).
-7. **`memory-hog` contradicts one scenario.** `pending-sectors-unrelated-oom`
-   says the pod's storage is not on the disk; `memory-hog.yaml` mounts a
-   hostPath on it.
+7. ~~**`memory-hog` contradicts one scenario.**~~ *Resolved.*
+   `pending-sectors-unrelated-oom` and `stable-defects-oom` now run
+   `memory-hog-nodisk`, the same OOM-killed pod with no volumes, so nothing
+   it does touches the disk. `stable-defects-healthy-hostpath-oom` keeps
+   `memory-hog`, whose hostPath on the disk is that scenario's point; with
+   `stable-defects-oom` on the no-disk variant, the two differ in exactly
+   that. The dev corpus follows the manifests, and a test checks that each
+   synthetic pod has a hostPath exactly when its workload does.
 8. **NPD install is unspecified.** Which NPD deployment, which monitors,
    and whether `hack/npd-plugin`'s SMART plugin is enabled for
    `npd-present` all change results and should be fixed before capture.
