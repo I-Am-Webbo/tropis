@@ -203,3 +203,50 @@ func CheckStableDefects(scenarioID, serial string, host *schema.HostCapture) err
 	}
 	return nil
 }
+
+// CheckSMARTWithheld verifies that a scenario declaring hardware
+// smart-withheld was captured with the collector unable to read SMART: at
+// least one device in the capture, every device unreadable, and every one
+// for lack of permission. A device that was read would give the model the
+// SMART data the label says it does not have; a device unreadable for
+// another reason (above all a timeout, which a hung drive causes) is a
+// finding about the disk rather than a capability withheld.
+func CheckSMARTWithheld(scenarioID string, host *schema.HostCapture) error {
+	if host == nil {
+		return refuse("scenario %s needs SMART withheld, but there is no host capture", scenarioID)
+	}
+	var readable, otherwise, denied []string
+	for path, raw := range host.SMART {
+		d, fail := smart.Parse(raw, path)
+		switch {
+		case fail == nil:
+			readable = append(readable, d.Path)
+		case fail.Reason == smart.FailurePermission:
+			denied = append(denied, path)
+		default:
+			otherwise = append(otherwise, fmt.Sprintf("%s (%s)", path, fail.Reason))
+		}
+	}
+	for path, f := range host.Unreadable {
+		if f.Reason == string(smart.FailurePermission) {
+			denied = append(denied, path)
+		} else {
+			otherwise = append(otherwise, fmt.Sprintf("%s (%s)", path, f.Reason))
+		}
+	}
+	sort.Strings(readable)
+	sort.Strings(otherwise)
+	const fix = "run the collector as a non-root user for this capture (docs/capture-rig.md, 4.7)"
+	switch {
+	case len(readable) > 0:
+		return refuse("scenario %s needs SMART withheld, but the collector read %s; %s",
+			scenarioID, strings.Join(readable, ", "), fix)
+	case len(otherwise) > 0:
+		return refuse("scenario %s needs SMART withheld, but devices were unreadable for a reason other than permission: %s",
+			scenarioID, strings.Join(otherwise, ", "))
+	case len(denied) == 0:
+		return refuse("scenario %s needs SMART withheld, but the capture has no device at all; "+
+			"the collector found nothing to try, so nothing shows it could not read SMART", scenarioID)
+	}
+	return nil
+}

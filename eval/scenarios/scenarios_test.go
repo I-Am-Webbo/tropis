@@ -101,6 +101,20 @@ func TestScarredSATAMatchesSyntheticArchetype(t *testing.T) {
 	}
 }
 
+// Exactly the scenarios whose synthetic SMART is unreadable must demand a
+// capture in which the collector could not read SMART.
+func TestSMARTWithheldMatchesSyntheticArchetype(t *testing.T) {
+	all, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, s := range all {
+		if slices.Contains(s.Hardware, "smart-withheld") != (s.Synthetic.SMART == "unreadable") {
+			t.Errorf("%s: hardware %v does not match synthetic.smart %q", s.ID, s.Hardware, s.Synthetic.SMART)
+		}
+	}
+}
+
 func TestValidateRejects(t *testing.T) {
 	bad := `
 scenarios:
@@ -146,6 +160,12 @@ scenarios:
     hardware: [scared-sata]
     expected: {relationship: coincidental}
     synthetic: {smart: realloc-stable, workload: oom}
+  - id: withheld-and-scarred
+    description: d
+    workload: idle
+    hardware: [smart-withheld, scarred-sata]
+    expected: {relationship: coincidental}
+    synthetic: {smart: realloc-stable, workload: oom}
 `
 	_, err := Parse([]byte(bad))
 	if err == nil {
@@ -153,7 +173,7 @@ scenarios:
 	}
 	for _, want := range []string{"lower-case", "description", "rootCauseLayer", "shiny", "set together",
 		"needs expectSmart", "needs hardware: [real-sata]", "not one of [pending_sectors",
-		"contradict each other", `hardware "scared-sata" is not one of`} {
+		"contradict each other", "smart-withheld and scarred-sata contradict", `hardware "scared-sata" is not one of`} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should mention %q:\n%v", want, err)
 		}

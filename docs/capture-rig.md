@@ -203,13 +203,14 @@ All scenarios run on `worker-02`; `TROPIS_DISK` is the drive's inventory id.
 | 25 | read-errors-unused-region-config-crash | coincidental | C, dm | `read-errors.sh`, default mid-disk blocks | check no workload file sits there |
 | 26 | stable-defects-healthy-hostpath-oom | coincidental | **S**, `scarred-sata` | natural defects | `memory-hog`: hostPath on the disk, by design |
 | 27 | pending-no-symptoms | insufficient | C, `real-sata` | `pending-sectors.sh` | `idle` workload |
-| 28 | unreadable-smart-restarts | insufficient | C | SMART withheld + `silent-kill.sh` | `batch-reader-silent`; SMART: see Gaps; kills: see 4.7 |
+| 28 | unreadable-smart-restarts | insufficient | C, `smart-withheld` | SMART withheld + `silent-kill.sh` | `batch-reader-silent`; collector as a non-root user, last before the pending-sector scenarios (4.7) |
 | 29 | pending-silent-137 | insufficient | C, `real-sata` | `pending-sectors.sh` + `silent-kill.sh` | `batch-reader-silent`; default (mid-disk) LBAs, away from the dataset; kills: see 4.7 |
 | 30 | degradation-early-no-symptoms | insufficient | D, `real-sata` | `degradation.sh` STEP=2 INTERVAL=600 | `idle` workload |
 
 By drive: **C** 20 scenarios (7 real-SATA, 13 others including #28), **S** 5,
 **D** 5. Order on the clean drive: dm and
-filesystem scenarios first, then pending-sector ones, because hdparm faults
+filesystem scenarios first, then #28 (which restarts the collector; see
+4.7), then pending-sector ones, because hdparm faults
 can leave a permanent reallocation that would turn a "clean" drive into a
 scarred one. Degradation is last on whichever drive is the degrader, since
 it is meant to leave permanent marks.
@@ -436,6 +437,47 @@ refuses unless reallocated is above zero and unchanged and pending is 0 in
 both readings. A refusal here means the drive is not (or is no longer) scarred;
 there is no override.
 
+**Withholding SMART (#28 `unreadable-smart-restarts`).** The collector
+must be running but unable to read SMART. No chart value does that:
+`securityMode: devicePlugin` without a device plugin leaves the pod
+unschedulable, and an unprivileged container sees no disks at all, so
+`smartctl --scan` finds nothing and the fixture would show an empty host
+rather than an unreadable one. Instead keep the container privileged (so
+the disks are still found) and run it as an unprivileged user, so every
+`smartctl` open fails with "Permission denied", the same failure the dev
+corpus's `unreadable` archetype carries:
+
+```sh
+kubectl -n tropis-system patch daemonset tropis-collector --type=json \
+  -p '[{"op":"replace","path":"/spec/template/spec/containers/0/securityContext/runAsUser","value":65534}]'
+kubectl -n tropis-system rollout status daemonset tropis-collector
+```
+
+Wait 2 minutes, then reset, apply `batch-reader-silent` and run
+`silent-kill.sh` as for #29 (there is no `inject`), and capture without
+`--injection` (with `--disk clean`, as usual). The scenario declares
+`hardware: [smart-withheld]`, and capture refuses unless the collector
+tried at least one device and every one read as permission denied: a
+device it could read, or one unreadable for another reason (a timeout is
+evidence about the disk), would make the label untrue. If it refuses with
+"no device at all", `smartctl --scan` found nothing as that user; name
+the devices with `collector.scan` before patching. Revert straight after
+capturing, and check the collector is back to `runAsUser: 0`:
+
+```sh
+kubectl -n tropis-system rollout undo daemonset tropis-collector
+kubectl -n tropis-system rollout status daemonset tropis-collector
+```
+
+Both the patch and the undo restart the collector, which loses its
+in-memory SMART history. Nothing in #28 needs that history, but a
+SMART-visible capture does, so do #28 last among the clean drive's
+non-SMART-visible scenarios, immediately before the pending-sector ones:
+each of those restarts the collector at its reset anyway (4.7 step 1) and
+needs nothing older. Never do it in the stable-defect block, whose 24 h
+of history it would wipe. The block runs once per NPD variant, so #28
+takes this place in both passes.
+
 ### 4.8 Check, commit, evaluate
 
 1. Check each fixture: `label.json`'s `injection.params` show the SMART
@@ -525,9 +567,16 @@ there is no override.
    fault and must never reach a label; its record goes to the run log.
    The kubelet's ordinary restart events cannot be avoided and are not a
    cause.
-6. **Withholding SMART is undocumented.** `unreadable-smart-restarts` says
-   "the capability is withheld for this capture"; there is no documented
-   procedure (and changing `collector.securityMode` restarts the collector).
+6. ~~**Withholding SMART is undocumented.**~~ *Resolved.* No chart value
+   leaves the collector running but unable to read SMART (`devicePlugin`
+   without a plugin is unschedulable; unprivileged, it sees no disks). 4.7
+   now patches the DaemonSet to run the collector as `runAsUser: 65534`,
+   still privileged, so every device reads as permission denied, and
+   reverts with `rollout undo`; it runs last before the pending-sector
+   scenarios because both steps restart the collector. The scenario
+   declares `hardware: [smart-withheld]`, and capture refuses it unless
+   every device the collector tried was denied permission and none was
+   read.
 7. ~~**`memory-hog` contradicts one scenario.**~~ *Resolved.*
    `pending-sectors-unrelated-oom` and `stable-defects-oom` now run
    `memory-hog-nodisk`, the same OOM-killed pod with no volumes, so nothing

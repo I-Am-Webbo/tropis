@@ -37,7 +37,9 @@ counters is higher on the injected drive (found by the serial in the
 injection record) than in the collector's earlier reading: restart the
 collector before injecting so that reading is pre-fault. For a scarred-sata
 scenario it refuses unless the --disk drive's reallocated count is above zero
-and unchanged since that reading, and its pending count is 0 in both.
+and unchanged since that reading, and its pending count is 0 in both. For a
+smart-withheld scenario it refuses unless every device the collector tried
+reads as permission denied and none was readable.
 `
 
 func runCapture(args []string, stdout, stderr io.Writer) int {

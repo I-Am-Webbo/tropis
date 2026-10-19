@@ -236,12 +236,17 @@ func TestSerialFromRecord(t *testing.T) {
 }
 
 // Through Capture: a real-sata scenario whose drive did not react writes
-// nothing, a stable-defect scenario needs counters that held still, and a
-// scenario with neither is not checked.
+// nothing, a stable-defect scenario needs counters that held still, a
+// smart-withheld one needs every device denied, and a scenario with none of
+// these is not checked.
 func TestCaptureChecksSMARTChange(t *testing.T) {
 	still := scarred(t)
 	noHistory := Sources{
 		Host: fakeHost{cur: map[string]schema.RawJSON{"/dev/sdb": reading(t, sampleSerial, 1544, 168, 96)}},
+		K8s:  fakeK8s{}, Now: func() time.Time { return at },
+	}
+	withheld := Sources{
+		Host: fakeHost{cur: map[string]schema.RawJSON{"/dev/sdb": sample(t, "error-permission-denied.json")}},
 		K8s:  fakeK8s{}, Now: func() time.Time { return at },
 	}
 	noSerial := record("disk.pending_sectors", "real", false)
@@ -267,6 +272,9 @@ func TestCaptureChecksSMARTChange(t *testing.T) {
 		{"stable defects that grew", sources(t, false), "stable-defects-oom", nil,
 			"stable-defects-oom needs stable defects on drive Z4Z1KQPL (/dev/sdb)"},
 		{"stable defects with no history", noHistory, "stable-defects-oom", nil, "no earlier reading"},
+		{"SMART withheld", withheld, "unreadable-smart-restarts", nil, ""},
+		{"SMART not withheld", sources(t, false), "unreadable-smart-restarts", nil,
+			"unreadable-smart-restarts needs SMART withheld, but the collector read /dev/sdb"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -303,5 +311,62 @@ func TestCaptureStableDefectsNeedsInventorySerial(t *testing.T) {
 	})
 	if err == nil || !errors.Is(err, ErrRefused) || !strings.Contains(err.Error(), "serial") {
 		t.Fatalf("error %v should be a refusal asking for the serial", err)
+	}
+}
+
+// sample returns one of the captured smartctl samples verbatim.
+func sample(t *testing.T, name string) schema.RawJSON {
+	t.Helper()
+	raw, err := os.ReadFile(filepath.Join("..", "..", "pkg", "host", "smart", "testdata", name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema.RawJSON(raw)
+}
+
+func TestCheckSMARTWithheld(t *testing.T) {
+	denied := sample(t, "error-permission-denied.json")
+	type readings map[string]schema.RawJSON
+	type failures map[string]schema.CollectionFailure
+	tests := []struct {
+		name    string
+		smart   readings
+		failed  failures
+		refused string // "" means the check passes
+	}{
+		{"every device denied", readings{"/dev/sda": denied, "/dev/sdb": denied}, nil, ""},
+		{"denied before smartctl's output was kept", nil,
+			failures{"/dev/sdb": {Reason: "permission_denied", Detail: "open: permission denied"}}, ""},
+		{"one device readable", readings{"/dev/sda": denied, "/dev/sdb": reading(t, sampleSerial, 0, 0, 0)}, nil,
+			"the collector read /dev/sdb"},
+		{"every device readable", readings{"/dev/sdb": reading(t, sampleSerial, 0, 0, 0)}, nil, "the collector read /dev/sdb"},
+		// A device that has gone away is not a capability withheld.
+		{"device missing", readings{"/dev/sda": denied, "/dev/sdz": sample(t, "error-missing-device.json")}, nil,
+			"/dev/sdz (device_not_found)"},
+		// A hung drive is a finding about the disk, not a setting.
+		{"device timed out", readings{"/dev/sda": denied},
+			failures{"/dev/sdb": {Reason: "timeout", Detail: "context deadline exceeded"}}, "/dev/sdb (timeout)"},
+		{"no devices at all", readings{}, nil, "no device at all"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			hc := &schema.HostCapture{SMART: tt.smart, Unreadable: tt.failed, CollectedAt: at}
+			err := CheckSMARTWithheld("some-scenario", hc)
+			if tt.refused == "" {
+				if err != nil {
+					t.Fatalf("expected the check to pass: %v", err)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("expected the capture to be refused")
+			}
+			if !errors.Is(err, ErrRefused) {
+				t.Errorf("not a refusal: %v", err)
+			}
+			if !strings.Contains(err.Error(), tt.refused) || !strings.Contains(err.Error(), "some-scenario") {
+				t.Errorf("error %q should name the scenario and mention %q", err, tt.refused)
+			}
+		})
 	}
 }

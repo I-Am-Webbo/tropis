@@ -57,7 +57,10 @@ type Scenario struct {
 	// "scarred-sata" for scenarios that need a drive with old, stable
 	// reallocated sectors. Capture refuses a scarred-sata fixture unless the
 	// drive's reallocated count is above zero and unchanged since the
-	// collector's earlier reading, and pending is 0 in both.
+	// collector's earlier reading, and pending is 0 in both. "smart-withheld"
+	// is not a drive but a rig setting: the collector runs without
+	// permission to read SMART, and capture refuses unless every device it
+	// tried reads as permission denied and none was readable.
 	Hardware []string `json:"hardware,omitempty"`
 
 	// ExpectSMART names the SMART counters the injected fault is expected to
@@ -107,7 +110,7 @@ var (
 
 	// HardwareKinds are the values a scenario can list in hardware. A typo
 	// would silently skip the check capture makes for the real one.
-	HardwareKinds = []string{"real-sata", "scarred-sata"}
+	HardwareKinds = []string{"real-sata", "scarred-sata", "smart-withheld"}
 
 	// SMARTCounters are the counters a scenario can name in expectSmart.
 	SMARTCounters = []string{CounterPending, CounterReallocated, CounterUncorrectable}
@@ -194,6 +197,15 @@ func Validate(all []Scenario) error {
 		// exists to move them.
 		if realSATA && slices.Contains(s.Hardware, "scarred-sata") {
 			add("%s: hardware real-sata and scarred-sata contradict each other", where)
+		}
+		// Both of those are claims about SMART readings, which a
+		// smart-withheld capture has none of.
+		if slices.Contains(s.Hardware, "smart-withheld") {
+			for _, h := range []string{"real-sata", "scarred-sata"} {
+				if slices.Contains(s.Hardware, h) {
+					add("%s: hardware smart-withheld and %s contradict each other", where, h)
+				}
+			}
 		}
 		for _, h := range s.Hardware {
 			if !slices.Contains(HardwareKinds, h) {

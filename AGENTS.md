@@ -34,6 +34,7 @@ test guards a rule, do not weaken the test to make a change pass.
 | Tropis is read-only. The only write is its own `NodeHealthReport`, plus opt-in Node Events (create, `default` namespace only, off by default). Any new write goes in `optInGrants` and SECURITY.md together. | The project's core promise | `deploy/rbac_test.go`; `pkg/k8s` `TestCollectIsReadOnly`; `make kind-e2e` |
 | Nothing synthetic in `eval/fixtures/`. | Synthetic fixtures void the published numbers | `fixture.PublishableCorpus`; `tropis eval --publishable` |
 | A `real-sata` fixture's SMART must have moved: capture refuses one unless an `expectSmart` counter grew on the injected drive (matched by serial) since the collector's earlier reading. A `scarred-sata` fixture's must have held still: reallocated above zero and unchanged, pending 0, on the `--disk` drive (matched by its inventory `serial`). No override. | A drive that did not react, labelled SMART-visible, is a synthetic fixture with a real one's label; a clean drive labelled as carrying stable defects is the same | `eval/capture` `TestCheckSMARTChange`, `TestCheckStableDefects`, `TestCaptureChecksSMARTChange`; `eval/scenarios` `Validate`, `TestScarredSATAMatchesSyntheticArchetype` |
+| A `smart-withheld` fixture must show SMART unreadable: capture refuses one unless the collector tried at least one device and every one was denied permission, none read and none failed otherwise. No override. | A label saying the collector could not read SMART, on a fixture that carries a reading (or a timeout, which is evidence about the disk), would be untrue of what the model is given | `eval/capture` `TestCheckSMARTWithheld`, `TestCaptureChecksSMARTChange`; `eval/scenarios` `Validate`, `TestSMARTWithheldMatchesSyntheticArchetype` |
 | Ground truth never reaches analysis. Only `fixture.LoadLabel*` reads `label.json`, only in the scoring phase. | Otherwise the eval measures recognition of its own test cases | `pkg/fixture` `TestLoaderCannotReachLabels`; `eval/runner` `TestLabelsAreWithheldFromAnalysis` |
 | Model input is built only by `reason.BuildInput`, which redacts. | No unredacted log content may leave the process | `pkg/reason` `TestPlantedCredentialsNeverReachModelInput` |
 | Provider SDKs are imported only in their backend package (`pkg/reason/anthropic`). | A local backend must be supported exactly as well | `pkg/reason` `TestProviderSDKsStayInTheirPackages` |
@@ -61,7 +62,9 @@ test guards a rule, do not weaken the test to make a change pass.
   change must declare `hardware: [real-sata]` and `expectSmart` (the
   counters capture checks grew), consistent with its `synthetic.smart`. A
   scenario on a drive with old, stable defects (`synthetic.smart:
-  realloc-stable`) must declare `hardware: [scarred-sata]`.
+  realloc-stable`) must declare `hardware: [scarred-sata]`, and one whose
+  collector cannot read SMART (`synthetic.smart: unreadable`) `hardware:
+  [smart-withheld]`.
 - **`smartctl` exit status is a bitfield.** Non-zero is normal for a failing
   drive. Read the JSON envelope; see the comments in `pkg/host/smart/parse.go`.
 - **Unanchored `.gitignore` patterns** once swallowed `cmd/tropis-collector`
