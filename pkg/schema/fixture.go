@@ -178,6 +178,18 @@ type K8sCapture struct {
 	// else's summary of the evidence rather than the evidence.
 	NPDConditions []RawJSON `json:"npdConditions,omitempty"`
 
+	// NPDEvents holds events about the node reported by anything other than
+	// a Kubernetes component — in practice node-problem-detector, which
+	// records an event for each temporary rule (TaskHung, OOMKilling) and
+	// each condition change (FilesystemIsReadOnly). See triggers.IsEvidence.
+	//
+	// Like NPDConditions they are never evidence: they are NPD's summary of
+	// the kernel log, which v1 does not read, and an npd-absent capture has
+	// no equivalent. They are kept, not dropped, so a capture records what
+	// NPD said. No rule raises a node on them yet. Tropis's own events are
+	// in neither field: the collector drops them.
+	NPDEvents []RawJSON `json:"npdEvents,omitempty"`
+
 	// CollectedAt is when the Kubernetes capture was taken.
 	CollectedAt time.Time `json:"collectedAt"`
 }

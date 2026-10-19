@@ -132,7 +132,9 @@ helm upgrade tropis deploy/helm/tropis -n tropis-system --reuse-values \
 
 Each change is recorded as an Event on the Node — `TropisCausalVerdict`
 (Warning), `TropisVerdictCleared` or `TropisVerdictChanged` (Normal) — visible
-in `kubectl describe node` and to any event exporter.
+in `kubectl describe node` and to any event exporter. Tropis never reads its
+own Events back as evidence: the collector drops them, so a later analysis
+of the node cannot see what the last one concluded.
 
 This is **off by default** because it is the one write Tropis can make beyond
 its own reports. Enabling it grants the analyser `create` on

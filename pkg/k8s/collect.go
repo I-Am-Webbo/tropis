@@ -120,11 +120,9 @@ func (c *Collector) Collect(ctx context.Context, nodeName string) (*schema.K8sCa
 		capture.Pods = append(capture.Pods, raw)
 	}
 
-	events, err := c.events(ctx, node, pods)
-	if err != nil {
+	if capture.Events, capture.NPDEvents, err = c.events(ctx, node, pods); err != nil {
 		return nil, err
 	}
-	capture.Events = events
 
 	capture.Logs = c.logs(ctx, pods)
 	return capture, nil
@@ -148,8 +146,17 @@ func splitConditions(conds []corev1.NodeCondition) (kubelet, external []corev1.N
 }
 
 // events returns events for the node and its pods within the event window,
-// oldest first.
-func (c *Collector) events(ctx context.Context, node *corev1.Node, pods []corev1.Pod) ([]schema.RawJSON, error) {
+// oldest first, split by who reported them.
+//
+// This is where node-problem-detector's events are kept out of the evidence,
+// as splitConditions does for its conditions. NPD reports through Node
+// events as well as conditions, and storing them with the kubelet's would
+// hand its summary of the kernel log to the reasoning layer. Events about the
+// node from anything but a Kubernetes component go to external; see
+// triggers.IsEvidence. Tropis's own events, its earlier verdicts, are
+// dropped: they are in its NodeHealthReport already, and read back they
+// would let the model see what it concluded last time.
+func (c *Collector) events(ctx context.Context, node *corev1.Node, pods []corev1.Pod) (evidence, external []schema.RawJSON, err error) {
 	cutoff := c.now().Add(-eventWindow)
 
 	// Events live in the namespace of their involved object; node events in
@@ -171,7 +178,7 @@ func (c *Collector) events(ctx context.Context, node *corev1.Node, pods []corev1
 	}
 	sort.Strings(nsList)
 
-	var matched []corev1.Event
+	var matched, others []corev1.Event
 	for _, ns := range nsList {
 		var opts metav1.ListOptions
 		if ns == metav1.NamespaceDefault && nodeOnly {
@@ -179,21 +186,42 @@ func (c *Collector) events(ctx context.Context, node *corev1.Node, pods []corev1
 		}
 		list, err := c.Client.CoreV1().Events(ns).List(ctx, opts)
 		if err != nil {
-			return nil, fmt.Errorf("list events in %q: %w", ns, err)
+			return nil, nil, fmt.Errorf("list events in %q: %w", ns, err)
 		}
 		for _, e := range list.Items {
 			relevant := (e.InvolvedObject.Kind == "Node" && e.InvolvedObject.Name == node.Name) ||
 				(e.InvolvedObject.Kind == "Pod" && podKeys[e.InvolvedObject.Namespace+"/"+e.InvolvedObject.Name])
-			if relevant && !triggers.EventTime(e).Before(cutoff) {
+			if !relevant || triggers.EventTime(e).Before(cutoff) {
+				continue
+			}
+			switch {
+			case triggers.FromTropis(e):
+			case triggers.IsEvidence(e):
 				matched = append(matched, e)
+			default:
+				others = append(others, e)
 			}
 		}
 	}
-	sort.SliceStable(matched, func(i, j int) bool { return triggers.EventTime(matched[i]).Before(triggers.EventTime(matched[j])) })
+	if evidence, err = marshalEvents(matched); err != nil {
+		return nil, nil, err
+	}
+	if external, err = marshalEvents(others); err != nil {
+		return nil, nil, err
+	}
+	return evidence, external, nil
+}
 
-	out := make([]schema.RawJSON, 0, len(matched))
-	for i := range matched {
-		raw, err := marshalClean(&matched[i])
+// marshalEvents serialises events oldest first. It returns nil for none, so
+// an empty NPDEvents is left out of a fixture.
+func marshalEvents(events []corev1.Event) ([]schema.RawJSON, error) {
+	if len(events) == 0 {
+		return nil, nil
+	}
+	sort.SliceStable(events, func(i, j int) bool { return triggers.EventTime(events[i]).Before(triggers.EventTime(events[j])) })
+	out := make([]schema.RawJSON, 0, len(events))
+	for i := range events {
+		raw, err := marshalClean(&events[i])
 		if err != nil {
 			return nil, err
 		}

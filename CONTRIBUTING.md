@@ -51,8 +51,9 @@ rejected regardless of its quality.
    that provider's package. A local backend is supported exactly as well as a
    hosted one.
 4. **node-problem-detector is optional.** Everything works identically with
-   NPD absent. NPD conditions may trigger the pre-filter; NPD output is never
-   evidence for the reasoning layer.
+   NPD absent. NPD conditions may trigger the pre-filter; NPD output, its
+   conditions and its Node events alike, is never evidence for the reasoning
+   layer.
 5. **`insufficient_evidence` and `coincidental` are real outputs**, not
    failure modes.
 6. **Redaction runs before any model call.**

@@ -42,6 +42,7 @@ func event(t *testing.T, kind, typ, reason, message string) schema.RawJSON {
 		Type:           typ,
 		Reason:         reason,
 		Message:        message,
+		Source:         corev1.EventSource{Component: "kubelet"},
 	})
 }
 
@@ -338,5 +339,56 @@ func TestFailing(t *testing.T) {
 		if got := Failing(tc.s); got != tc.want {
 			t.Errorf("%s: Failing = %v, want %v", tc.name, got, tc.want)
 		}
+	}
+}
+
+// IsEvidence is an allowlist for everything but pods: a Node event counts
+// only from a Kubernetes component, so node-problem-detector's events, under
+// whatever source its monitors are configured with, never do. Tropis's own
+// events never count, on any object.
+func TestIsEvidence(t *testing.T) {
+	nodeRef := corev1.ObjectReference{Kind: "Node", Name: "worker-01"}
+	podRef := corev1.ObjectReference{Kind: "Pod", Namespace: "app", Name: "web-0"}
+	cases := []struct {
+		name string
+		e    corev1.Event
+		want bool
+	}{
+		{"kubelet node event", corev1.Event{InvolvedObject: nodeRef, Source: corev1.EventSource{Component: "kubelet"}}, true},
+		{"node controller", corev1.Event{InvolvedObject: nodeRef, Source: corev1.EventSource{Component: "node-controller"}}, true},
+		{"kube-proxy through events.k8s.io", corev1.Event{InvolvedObject: nodeRef, ReportingController: "kube-proxy"}, true},
+		{"NPD kernel-monitor", corev1.Event{InvolvedObject: nodeRef, Reason: "TaskHung", Source: corev1.EventSource{Component: "kernel-monitor"}, ReportingController: "kernel-monitor"}, false},
+		{"NPD custom plugin", corev1.Event{InvolvedObject: nodeRef, Reason: "SmartFailing", Source: corev1.EventSource{Component: "smart-custom-plugin-monitor"}}, false},
+		{"node event with no reporter", corev1.Event{InvolvedObject: nodeRef}, false},
+		{"Tropis's own node event", corev1.Event{InvolvedObject: nodeRef, Reason: "TropisCausalVerdict", ReportingController: TropisReporterPrefix + "sweep"}, false},
+		{"pod event from the kubelet", corev1.Event{InvolvedObject: podRef, Source: corev1.EventSource{Component: "kubelet"}}, true},
+		{"pod event from a CSI driver", corev1.Event{InvolvedObject: podRef, ReportingController: "csi.example.com"}, true},
+		{"Tropis-reported pod event", corev1.Event{InvolvedObject: podRef, Source: corev1.EventSource{Component: TropisReporterPrefix + "sweep"}}, false},
+	}
+	for _, tc := range cases {
+		if got := IsEvidence(tc.e); got != tc.want {
+			t.Errorf("%s: IsEvidence = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A Kubernetes-side rule fires only on evidence the model can read. An NPD
+// event carrying a storage signature, left in Events by an older capture,
+// must not raise k8s.storage_error.
+func TestNPDEventsDoNotRaiseKubernetesRules(t *testing.T) {
+	npd := raw(t, &corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "default", Name: "worker-01.npd"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: "worker-01"},
+		Type:           "Warning",
+		Reason:         "IOError",
+		Message:        "write failed: Input/output error",
+		Source:         corev1.EventSource{Component: "kernel-monitor"},
+	})
+	if got := Evaluate(schema.K8sCapture{Events: []schema.RawJSON{npd}}); len(got) != 0 {
+		t.Errorf("an NPD event raised %v", got)
+	}
+	kubelet := event(t, "Node", "Warning", "IOError", "write failed: Input/output error")
+	if got := RuleIDs(Evaluate(schema.K8sCapture{Events: []schema.RawJSON{kubelet}})); !reflect.DeepEqual(got, []string{RuleStorageError}) {
+		t.Errorf("the same event from the kubelet should raise %s, got %v", RuleStorageError, got)
 	}
 }

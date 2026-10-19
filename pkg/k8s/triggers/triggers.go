@@ -112,7 +112,15 @@ func Evaluate(kc schema.K8sCapture) []Finding {
 		}
 	}
 	pods := decodePods(kc.Pods)
-	events := decodeEvents(kc.Events)
+	// Only the events the model can read: a rule fires on evidence the
+	// capture shows it, never on node-problem-detector's events or Tropis's
+	// own, even where an older fixture still carries them in Events.
+	var events []corev1.Event
+	for _, e := range decodeEvents(kc.Events) {
+		if IsEvidence(e) {
+			events = append(events, e)
+		}
+	}
 
 	out = append(out, diskPressure(node)...)
 	out = append(out, storageEvictions(pods, events)...)

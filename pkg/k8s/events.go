@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/I-Am-Webbo/tropis/pkg/k8s/triggers"
 	"github.com/I-Am-Webbo/tropis/pkg/notify"
 )
 
@@ -81,7 +82,7 @@ func (e *EventNotifier) Notify(ctx context.Context, c notify.Change) error {
 			Namespace: EventNamespace,
 		},
 		EventTime:           metav1.NewMicroTime(now()),
-		ReportingController: "tropis.io/sweep",
+		ReportingController: triggers.TropisReporterPrefix + "sweep",
 		ReportingInstance:   instance,
 		Action:              "Diagnose",
 		Reason:              reason,

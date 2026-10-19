@@ -22,9 +22,14 @@ import (
 // that unreadable reasons other than a timeout say nothing about the disk,
 // and that a workload causing its own storage eviction is causal at the
 // kubernetes layer, not coincidental. The input document is unchanged.
-const PromptVersion = "v4"
+//
+// v5: prompt text identical to v4. kubernetes.events no longer carries
+// node-problem-detector's Node events or Tropis's own: an event about the
+// node is included only when a Kubernetes component reported it
+// (triggers.IsEvidence). Pod events are unchanged.
+const PromptVersion = "v5"
 
-//go:embed prompts/v4.md
+//go:embed prompts/v5.md
 var systemPrompt string
 
 // SystemPrompt returns the versioned system prompt. It is identical for every

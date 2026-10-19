@@ -410,8 +410,8 @@ Why stock, and why without Tropis's SMART plugin
 ([hack/npd-plugin](../hack/npd-plugin/README.md)): stock NPD is what an
 adopter's cluster has today, and the plugin is not upstream; the plugin runs
 the same rules as Tropis's own pre-filter, which is already a trigger in
-both variants, so enabling it would test nothing new; and NPD conditions
-never reach the model either way (AGENTS.md), so what the variant measures
+both variants, so enabling it would test nothing new; and NPD's conditions
+and events never reach the model either way (AGENTS.md), so what the variant measures
 is whether NPD's own conditions change which nodes get raised.
 
 Monitors enabled (upstream's DaemonSet passes
@@ -894,15 +894,21 @@ already runs as 65534 (an earlier undo was missed).
     capture. `--dry-run` prints the plan, and `make capture-test` (in `make
     check`) dry-runs it over every scenario in both variants, so a scenario
     it cannot drive fails the build.
-11. **NPD's events reach the model in `npd-present`.** NPD reports
-    through Node events as well as conditions: an event for each temporary
-    rule (`TaskHung`, for one) and one for each condition change (reason
-    `FilesystemIsReadOnly`, source `kernel-monitor`). The collector keeps
-    the node's events and `reason.BuildInput` passes events to the model,
-    so in the `npd-present` variant NPD's summary of the kernel log reaches
-    the model as evidence. The AGENTS.md rule on NPD forbids that, and
-    `npd-absent` has no equivalent (v1 reads no kernel log), so the two
-    variants would differ in evidence, not only in triggers. Not changed
-    with the NPD install: filtering them changes the model input, which
-    needs a new `PromptVersion`, and it must be decided before the
-    `npd-present` pass.
+11. ~~**NPD's events reach the model in `npd-present`.**~~ *Resolved*
+    at prompt v5. An event about the node is evidence only when a
+    Kubernetes component reported it (`kubelet`, `node-controller`,
+    `cidrAllocator`, `kube-proxy`, by `reportingComponent` or
+    `source.component`; `triggers.IsEvidence`), an allowlist like the
+    kubelet's node conditions, since NPD reports under each monitor's
+    configurable `source` and no list of its names can be complete. The
+    collector moves the rest, in practice NPD's (`TaskHung`,
+    `FilesystemIsReadOnly`), into a new `kubernetes.npdEvents`, which
+    nothing passes to the model, and `reason.BuildInput` and the
+    Kubernetes-side rules apply the same filter to `events`, so a fixture
+    that still holds them there cannot leak them. Pod events are
+    unchanged: NPD reports only on the Node. Tropis's own opt-in Node
+    Events (reporting controller `tropis.io/sweep`) leaked the same way on
+    the next sweep, carrying its previous verdict, and are now dropped at
+    collection and filtered in `BuildInput`. No rule raises a node on
+    `npdEvents` yet, so `npd-present` still differs from `npd-absent` in
+    NPD's conditions only.

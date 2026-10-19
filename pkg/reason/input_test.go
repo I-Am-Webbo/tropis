@@ -12,6 +12,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	"github.com/I-Am-Webbo/tropis/pkg/fixture"
 	"github.com/I-Am-Webbo/tropis/pkg/host/prefilter"
@@ -235,6 +236,126 @@ func TestNPDNeverReachesModelInputFromFixture(t *testing.T) {
 	assertNPDAbsent(t, in, "ReadonlyFilesystem")
 	if got := in.TriggeredBy(); len(got) != len(triggers) {
 		t.Errorf("triggeredBy should still be recorded for the verdict: %v", got)
+	}
+}
+
+// leakedEvents are events that must never reach the model: NPD's, under
+// three of the sources its monitors use, and one of Tropis's own as the API
+// server serves it through core/v1. Each carries a marker string.
+func leakedEvents(t *testing.T, nodeName string) (events []schema.RawJSON, markers []string) {
+	t.Helper()
+	at := metav1.NewTime(capturedAt.Add(-10 * time.Minute))
+	add := func(name, reason, msg string, src corev1.EventSource, controller string) {
+		events = append(events, mustJSON(t, corev1.Event{
+			ObjectMeta:          metav1.ObjectMeta{Namespace: "default", Name: name, UID: types.UID("uid-" + name)},
+			InvolvedObject:      corev1.ObjectReference{Kind: "Node", Name: nodeName},
+			Type:                "Warning",
+			Reason:              reason,
+			Message:             msg,
+			Source:              src,
+			ReportingController: controller,
+			LastTimestamp:       at,
+		}))
+		markers = append(markers, reason, "uid-"+name)
+	}
+	npd := func(source string) corev1.EventSource { return corev1.EventSource{Component: source, Host: nodeName} }
+	add("npd-hung", "TaskHung", "task jbd2/sdb1-8:412 blocked for more than 120 seconds.", npd("kernel-monitor"), "kernel-monitor")
+	add("npd-ro", "FilesystemIsReadOnly", `Node condition ReadonlyFilesystem is now: True, reason: FilesystemIsReadOnly, message: "Remounting filesystem read-only"`, npd("kernel-monitor"), "kernel-monitor")
+	add("npd-plugin", "SmartPendingSectors", "sdb: 24 pending sectors", npd("smart-custom-plugin-monitor"), "")
+	add("tropis-own", "TropisCausalVerdict", "worker-03: causal (host). Tropis has taken no action; see the NodeHealthReport.", corev1.EventSource{}, "tropis.io/sweep")
+	markers = append(markers, "jbd2", "Remounting filesystem", "pending sectors", "Tropis has taken no action")
+	return events, markers
+}
+
+// assertAbsent checks the document and the full user message for markers.
+func assertAbsent(t *testing.T, in *AnalysisInput, markers []string) {
+	t.Helper()
+	text, err := in.Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, err := UserMessage(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, s := range map[string]string{"document": string(text), "user message": msg} {
+		for _, m := range markers {
+			if strings.Contains(s, m) {
+				t.Errorf("%q reached the %s", m, name)
+			}
+		}
+	}
+}
+
+// NPD reports through Node events as well as conditions, and Tropis records
+// its verdicts as Node events. Neither may reach the model: not from
+// npdEvents, where the collector puts NPD's, and not from events, where an
+// older or hand-assembled capture may still hold them. A kubelet event about
+// the node still does.
+func TestNPDEventsNeverReachModelInput(t *testing.T) {
+	req := plantedRequest(t)
+	leaked, markers := leakedEvents(t, req.Node)
+	kubelet := mustJSON(t, corev1.Event{
+		ObjectMeta:     metav1.ObjectMeta{Namespace: "default", Name: "worker-03.kubelet", UID: "ev-kubelet"},
+		InvolvedObject: corev1.ObjectReference{Kind: "Node", Name: req.Node},
+		Type:           "Warning",
+		Reason:         "FreeDiskSpaceFailed",
+		Message:        "failed to garbage collect required amount of images",
+		Source:         corev1.EventSource{Component: "kubelet", Host: req.Node},
+		LastTimestamp:  metav1.NewTime(capturedAt.Add(-5 * time.Minute)),
+	})
+	req.Kubernetes.Events = append(append(req.Kubernetes.Events, leaked...), kubelet)
+	req.Kubernetes.NPDEvents = leaked
+
+	in, err := BuildInput(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAbsent(t, in, markers)
+	text, _ := in.Text()
+	for _, keep := range []string{"FreeDiskSpaceFailed", "event:ev-kubelet", "Back-off restarting failed container"} {
+		if !strings.Contains(string(text), keep) {
+			t.Errorf("Kubernetes event %q should still reach the model", keep)
+		}
+	}
+	// Citing a dropped event is citing something the model never saw.
+	if _, ok := in.lookupRef("event:uid-npd-ro"); ok {
+		t.Error("a dropped NPD event is still citable")
+	}
+}
+
+// The same against a corpus case where NPD is present: its npdEvents hold
+// NPD's FilesystemIsReadOnly event. The fixture is checked as stored, and
+// again with every NPD and Tropis event moved into events, as a capture
+// taken before the collector split them would hold them.
+func TestNPDEventsNeverReachModelInputFromFixture(t *testing.T) {
+	f, err := fixture.LoadFixture(filepath.Join("..", "..", "eval", "testdata", "fs-corruption-readonly-npd-present"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(f.Kubernetes.NPDEvents) == 0 {
+		t.Fatal("test setup: fixture should carry NPD events")
+	}
+	triggers := npdTriggers(t, f.Kubernetes.NPDConditions)
+	markers := []string{"FilesystemIsReadOnly", "Node condition ReadonlyFilesystem"}
+
+	in, err := BuildInput(RequestFromFixture(f, triggers))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAbsent(t, in, markers)
+	before, _ := in.Text()
+
+	leaked, more := leakedEvents(t, f.Node)
+	f.Kubernetes.Events = append(append(f.Kubernetes.Events, f.Kubernetes.NPDEvents...), leaked...)
+	in, err = BuildInput(RequestFromFixture(f, triggers))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertAbsent(t, in, append(markers, more...))
+	assertNPDAbsent(t, in, "ReadonlyFilesystem")
+	if after, _ := in.Text(); string(after) != string(before) {
+		t.Error("NPD and Tropis events in events changed the model input")
 	}
 }
 

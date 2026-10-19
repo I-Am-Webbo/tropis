@@ -31,8 +31,9 @@ type Request struct {
 }
 
 // RequestFromFixture builds a Request from a fixture. The fixture's NPD
-// conditions ride along in Kubernetes, as in a live capture; BuildInput
-// ignores them, since NPD output is never evidence.
+// conditions and events ride along in Kubernetes, as in a live capture;
+// BuildInput ignores them, since NPD output is never evidence, and drops any
+// NPD or Tropis event an older fixture still carries in Events.
 func RequestFromFixture(f *schema.Fixture, triggeredBy []string) Request {
 	return Request{
 		Node:        f.Node,
@@ -193,7 +194,9 @@ type VolumeDoc struct {
 	Source string `json:"source,omitempty"`
 }
 
-// EventDoc is one Kubernetes event.
+// EventDoc is one Kubernetes event: any event about a pod, and events about
+// the node reported by a Kubernetes component (triggers.IsEvidence).
+// node-problem-detector's events and Tropis's own never appear.
 type EventDoc struct {
 	Ref     string    `json:"ref"`
 	Time    time.Time `json:"time"`
@@ -425,6 +428,13 @@ func (in *AnalysisInput) buildK8s(kc schema.K8sCapture, r *redact.Redactor) (K8s
 		var e corev1.Event
 		if err := json.Unmarshal(raw, &e); err != nil {
 			return doc, fmt.Errorf("build input: parse event %d: %w", i, err)
+		}
+		// Only events a Kubernetes component reported, and never Tropis's
+		// own. The collector already split NPD's into NPDEvents, which is
+		// never read here; this is the second line of defence, since a
+		// fixture may predate the split or be hand-assembled.
+		if !triggers.IsEvidence(e) {
+			continue
 		}
 		id := string(e.UID)
 		if id == "" {

@@ -118,7 +118,10 @@ sweep:
 - Pod names, namespaces, phases, restart counts, container statuses,
   resource requests and limits, and volume types. Environment variables and
   annotations are never sent.
-- Kubernetes event messages for the node and its pods
+- Kubernetes event messages for the node and its pods. Events about the
+  node are sent only when a Kubernetes component (the kubelet, the node
+  controller, kube-proxy) reported them: node-problem-detector's events and
+  Tropis's own are never sent.
 - Logs of unhealthy containers only
 - The kubelet's node conditions. node-problem-detector conditions are never
   sent.

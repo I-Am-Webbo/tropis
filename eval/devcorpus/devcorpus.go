@@ -125,6 +125,7 @@ func fixtureFor(s scenarios.Scenario, variant schema.Variant, at time.Time) (*sc
 	}
 	if variant == schema.VariantNPDPresent {
 		f.Kubernetes.NPDConditions = npdConditions(s.Synthetic.NPD, at)
+		f.Kubernetes.NPDEvents = npdEvents(s.Synthetic.NPD, at)
 		f.Environment.NPDVersion = "v0.8.20"
 	}
 	return f, nil
@@ -525,5 +526,38 @@ func npdConditions(archetype string, at time.Time) []schema.RawJSON {
 		return append(base, cond("FrequentContainerdRestart", "True", "FrequentContainerdRestart", "containerd is restarting frequently"))
 	default:
 		return append(base, cond("ReadonlyFilesystem", "False", "FilesystemIsNotReadOnly", "Filesystem is not read-only"))
+	}
+}
+
+// npdEvents returns the Node events stock NPD records alongside its
+// conditions: one per condition change, with the reason and message format
+// of NPD's util.GenerateConditionChangeEvent and the source of the monitor
+// that owns the condition. A live capture keeps them in npdEvents, never in
+// events (see triggers.IsEvidence).
+func npdEvents(archetype string, at time.Time) []schema.RawJSON {
+	ev := func(source, condition, reason, msg string) schema.RawJSON {
+		t := metav1.NewTime(at.Add(-10 * time.Minute))
+		return raw(&corev1.Event{
+			TypeMeta:            metav1.TypeMeta{Kind: "Event", APIVersion: "v1"},
+			ObjectMeta:          metav1.ObjectMeta{Namespace: "default", Name: nodeName + "." + reason, UID: uid("event", "npd", reason)},
+			InvolvedObject:      corev1.ObjectReference{Kind: "Node", Name: nodeName, UID: uid("node", nodeName)},
+			Type:                corev1.EventTypeWarning,
+			Reason:              reason,
+			Message:             fmt.Sprintf("Node condition %s is now: True, reason: %s, message: %q", condition, reason, msg),
+			Source:              corev1.EventSource{Component: source, Host: nodeName},
+			ReportingController: source,
+			ReportingInstance:   nodeName,
+			Count:               1,
+			FirstTimestamp:      t,
+			LastTimestamp:       t,
+		})
+	}
+	switch archetype {
+	case "readonly-fs":
+		return []schema.RawJSON{ev("kernel-monitor", "ReadonlyFilesystem", "FilesystemIsReadOnly", "Filesystem is read-only")}
+	case "containerd-restart":
+		return []schema.RawJSON{ev("systemd-monitor", "FrequentContainerdRestart", "FrequentContainerdRestart", "containerd is restarting frequently")}
+	default:
+		return nil
 	}
 }

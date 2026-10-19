@@ -15,7 +15,7 @@ Change `baseURL`, or the Secret name for the claude profiles, to match your
 cluster. Every setting is described with `backend` in
 [values.yaml](../deploy/helm/tropis/values.yaml).
 
-| Profile | Hardware | What leaves the cluster | Time per analysed node | Dev-corpus behaviour (30 cases) | Caveats |
+| Profile | Hardware | What leaves the cluster | Time per analysed node | Dev-corpus behaviour (30 cases, prompt v4) | Caveats |
 |---|---|---|---|---|---|
 | [claude](../deploy/helm/tropis/examples/claude.yaml) | None; an Anthropic API key in a Secret | The redacted evidence of each node the pre-filter raises, sent to Anthropic ([SECURITY.md](../SECURITY.md#what-leaves-the-cluster)) | Not yet measured | Not yet measured | The chart's default |
 | [claude-sweep-escalate](../deploy/helm/tropis/examples/claude-sweep-escalate.yaml) | As claude | As claude, sent once or twice per node | Not yet measured | Not yet measured | Cheaper and less accurate: a sweep that is confidently wrong is never escalated |
@@ -123,8 +123,12 @@ about 2.3 times slower in testing:
 ## How these were measured
 
 All 30 `npd-absent` fixtures in [eval/testdata](../eval/testdata/), at
-prompt v4, with `--concurrency 1 --seed 1`, on an RTX 3070 with Ollama
-0.40.6, thinking left at each model's default. The profile's run used a
+prompt v4, not yet re-run at the current prompt, v5. v5 keeps v4's prompt
+text and only removes node-problem-detector's and Tropis's own Node events
+from the model input; none of these fixtures carries either, and their
+input digests are the same at v5, so the numbers are expected to carry over,
+but they are v4 measurements until re-measured. They were taken with
+`--concurrency 1 --seed 1`, on an RTX 3070 with Ollama 0.40.6, thinking left at each model's default. The profile's run used a
 card that drove no display and `LLAMA_ARG_FIT_TARGET=512`; the other runs
 were made before those changes.
 
