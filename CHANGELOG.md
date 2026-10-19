@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.6.0](https://github.com/I-Am-Webbo/tropis/compare/v0.5.0...v0.6.0) (2026-10-19)
+
+
+### Features
+
+* **capture:** drive one capture per scenario from the scenario itself ([436e387](https://github.com/I-Am-Webbo/tropis/commit/436e387963f7c07e3adcad757f9a564acf2e39f7))
+* **capture:** refuse a smart-withheld fixture whose SMART was readable ([60456a6](https://github.com/I-Am-Webbo/tropis/commit/60456a63b8970dcd111107f3c35c10d76a5fb031))
+
+
+### Bug fixes
+
+* **reason:** keep NPD's and Tropis's own Node events out of the model input ([f007835](https://github.com/I-Am-Webbo/tropis/commit/f007835832494dbd4a1ec782d2bb79bd162b0c66))
+
 ## [0.5.0](https://github.com/I-Am-Webbo/tropis/compare/v0.4.0...v0.5.0) (2026-10-18)
 
 
