@@ -39,7 +39,7 @@ test guards a rule, do not weaken the test to make a change pass.
 | Ground truth never reaches analysis. Only `fixture.LoadLabel*` reads `label.json`, only in the scoring phase. | Otherwise the eval measures recognition of its own test cases | `pkg/fixture` `TestLoaderCannotReachLabels`; `eval/runner` `TestLabelsAreWithheldFromAnalysis` |
 | Model input is built only by `reason.BuildInput`, which redacts. | No unredacted log content may leave the process | `pkg/reason` `TestPlantedCredentialsNeverReachModelInput` |
 | Provider SDKs are imported only in their backend package (`pkg/reason/anthropic`). | A local backend must be supported exactly as well | `pkg/reason` `TestProviderSDKsStayInTheirPackages` |
-| NPD conditions are triggers, never evidence. No trigger name of any kind reaches the model. | NPD collapses signal to booleans; a pre-labelled node primes the model towards `causal` | `pkg/reason` `TestNPDNeverReachesModelInput`, `TestNPDNeverReachesModelInputFromFixture`, `TestTriggerNamesNeverReachModelInput`; `pkg/k8s` `TestNPDConditionsAreSplitFromNode` |
+| NPD conditions are triggers, never evidence. No trigger name of any kind reaches the model. NPD's Node events and Tropis's own never reach it either: a Node event is evidence only from a Kubernetes component (`triggers.IsEvidence`, an allowlist). | NPD collapses signal to booleans; a pre-labelled node primes the model towards `causal`; Tropis's events carry its previous verdict | `pkg/reason` `TestNPDNeverReachesModelInput`, `TestNPDNeverReachesModelInputFromFixture`, `TestNPDEventsNeverReachModelInput`, `TestNPDEventsNeverReachModelInputFromFixture`, `TestTriggerNamesNeverReachModelInput`; `pkg/k8s` `TestNPDConditionsAreSplitFromNode`, `TestNPDAndTropisEventsAreSplitFromEvidence`; `pkg/k8s/triggers` `TestIsEvidence` |
 | Malformed model output is an error, never a verdict. `reason.Finalize` never repairs. | A guessed verdict looks exactly like a real one | `pkg/reason` `TestFinalizeRejectsMalformedOutput` |
 | A truncated model input is an error, never a verdict. | A verdict from half the evidence looks exactly like one from all of it | `pkg/reason/local` `TestTruncatedInputIsAnError` |
 | `coincidental` and `insufficient_evidence` are real answers. | A reasoning layer that never returns them is broken | eval warnings; the prompt's examples |
@@ -54,7 +54,7 @@ test guards a rule, do not weaken the test to make a change pass.
   them. Tests fail if they drift.
 - **The prompt is versioned.** Any change to what the model sees that could
   alter its output needs a new `PromptVersion`: the prompt file
-  (`pkg/reason/prompts/v4.md`, which also needs a new file rather than an
+  (`pkg/reason/prompts/v5.md`, which also needs a new file rather than an
   edit in place) and equally the model-input document `reason.BuildInput`
   builds (adding, removing or reshaping a field). Eval results are only
   comparable within a version.

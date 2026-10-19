@@ -76,6 +76,7 @@ func event(ns, name, kind, obj string, at time.Time, msg string) *corev1.Event {
 		InvolvedObject: corev1.ObjectReference{Kind: kind, Namespace: ns, Name: obj},
 		LastTimestamp:  metav1.NewTime(at),
 		Message:        msg,
+		Source:         corev1.EventSource{Component: "kubelet"},
 	}
 }
 
@@ -335,3 +336,74 @@ func keys(m map[string]string) []string {
 }
 
 func resourceQty(s string) resource.Quantity { return resource.MustParse(s) }
+
+// node-problem-detector reports through Node events as well as conditions.
+// Those events are split from the evidence like its conditions, whatever
+// source its monitors use; Tropis's own events, its earlier verdicts read
+// back on a later sweep, are not kept at all. The Tropis event is built as
+// the API server serves an events.k8s.io/v1 Event through core/v1: the
+// notifier's reportingController becomes reportingComponent, with no
+// source.
+func TestNPDAndTropisEventsAreSplitFromEvidence(t *testing.T) {
+	npd := func(name, source, reason, msg string) *corev1.Event {
+		e := event("default", name, "Node", "worker-02", now.Add(-time.Hour), msg)
+		e.InvolvedObject.Namespace = ""
+		e.Reason, e.Type = reason, corev1.EventTypeWarning
+		e.Source = corev1.EventSource{Component: source, Host: "worker-02"}
+		e.ReportingController, e.ReportingInstance = source, "worker-02"
+		return e
+	}
+	tropisEvent := event("default", "worker-02.tropis.1", "Node", "worker-02", now.Add(-30*time.Minute), "worker-02: causal (host). Tropis has taken no action; see the NodeHealthReport.")
+	tropisEvent.Source = corev1.EventSource{}
+	tropisEvent.Reason = ReasonCausal
+	tropisEvent.ReportingController = "tropis.io/sweep"
+
+	c, _ := collector(
+		node(),
+		pod("db", "postgres-0", "worker-02", crashLooping("app")),
+		event("db", "e1", "Pod", "postgres-0", now.Add(-time.Hour), "Back-off restarting failed container"),
+		event("default", "e2", "Node", "worker-02", now.Add(-2*time.Hour), "Node worker-02 status is now: NodeHasDiskPressure"),
+		npd("worker-02.npd1", "kernel-monitor", "TaskHung", "task jbd2/sdb1-8:412 blocked for more than 120 seconds."),
+		npd("worker-02.npd2", "kernel-monitor", "FilesystemIsReadOnly", "Node condition ReadonlyFilesystem is now: True"),
+		npd("worker-02.npd3", "smart-custom-plugin-monitor", "SmartFailing", "sdb: pending sectors"),
+		tropisEvent,
+	)
+	capture, err := c.Collect(context.Background(), "worker-02")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	names := func(raw []schema.RawJSON) []string {
+		var out []string
+		for _, r := range raw {
+			var e corev1.Event
+			if err := json.Unmarshal(r, &e); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, e.Name)
+		}
+		return out
+	}
+	if got, want := names(capture.Events), []string{"e2", "e1"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("evidence events = %v, want %v", got, want)
+	}
+	if got, want := names(capture.NPDEvents), []string{"worker-02.npd1", "worker-02.npd2", "worker-02.npd3"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("npdEvents = %v, want %v", got, want)
+	}
+	all := ""
+	for _, r := range append(append([]schema.RawJSON{}, capture.Events...), capture.NPDEvents...) {
+		all += r.String()
+	}
+	for _, leak := range []string{"TaskHung", "FilesystemIsReadOnly", "SmartFailing", "jbd2"} {
+		for _, r := range capture.Events {
+			if strings.Contains(r.String(), leak) {
+				t.Errorf("NPD event content %q is in the evidence events", leak)
+			}
+		}
+	}
+	for _, leak := range []string{ReasonCausal, "tropis.io/", "Tropis has taken no action"} {
+		if strings.Contains(all, leak) {
+			t.Errorf("Tropis's own event (%q) was kept in the capture", leak)
+		}
+	}
+}

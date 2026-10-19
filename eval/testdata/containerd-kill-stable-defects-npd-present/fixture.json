@@ -465,6 +465,35 @@
         "message": "containerd is restarting frequently"
       }
     ],
+    "npdEvents": [
+      {
+        "kind": "Event",
+        "apiVersion": "v1",
+        "metadata": {
+          "name": "worker-02.FrequentContainerdRestart",
+          "namespace": "default",
+          "uid": "event-npd-FrequentContainerdRestart"
+        },
+        "involvedObject": {
+          "kind": "Node",
+          "name": "worker-02",
+          "uid": "node-worker-02"
+        },
+        "reason": "FrequentContainerdRestart",
+        "message": "Node condition FrequentContainerdRestart is now: True, reason: FrequentContainerdRestart, message: \"containerd is restarting frequently\"",
+        "source": {
+          "component": "systemd-monitor",
+          "host": "worker-02"
+        },
+        "firstTimestamp": "2026-09-01T22:50:00Z",
+        "lastTimestamp": "2026-09-01T22:50:00Z",
+        "count": 1,
+        "type": "Warning",
+        "eventTime": null,
+        "reportingComponent": "systemd-monitor",
+        "reportingInstance": "worker-02"
+      }
+    ],
     "collectedAt": "2026-09-01T23:00:00Z"
   },
   "baseline": {

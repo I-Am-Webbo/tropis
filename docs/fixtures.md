@@ -71,7 +71,7 @@ own test cases.
 | `environment` | Kernel, K8s version, disk model and transport, NPD presence |
 | `host.smart` | Raw `smartctl -j` output per device path |
 | `host.unreadable` | Devices smartctl produced no output for (for example a `timeout`), with the reason |
-| `kubernetes` | Node object, pods, events, logs, NPD conditions |
+| `kubernetes` | Node object, pods, events, logs, NPD conditions, NPD events (Node events not reported by a Kubernetes component; never evidence) |
 | `baseline` | What Prometheus and k8sgpt concluded about the same scenario |
 | `synthetic` | `true` for development fixtures — never publishable |
 
